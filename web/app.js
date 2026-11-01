@@ -1894,7 +1894,7 @@
   // ---------- settings: Mochi's color and greeting, her helpers, how the board looks ----------
   const MOCHI_COLORS = { blue: { B: '#33c7ff', S: '#ccf5ff', D: '#1480db' }, pink: { B: '#ff8fc2', S: '#ffe0ee', D: '#e0559a' }, mint: { B: '#5fdba0', S: '#d9fbe9', D: '#2fae73' },
     lilac: { B: '#b49bff', S: '#ece5ff', D: '#7e5ee6' }, butter: { B: '#ffd54f', S: '#fff4c4', D: '#e0a800' }, peach: { B: '#ffa978', S: '#ffe6d6', D: '#e57841' }, night: { B: '#4a4f7a', S: '#8d93c9', D: '#2b2e4f' } };
-  const settings = Object.assign({ pullColors: true, imgRadius: true, panelH: {}, mochiName: '', mochiCalm: 'lively', mochiChar: true, tbSize: 'm', dblNote: true, wLayers: true, wColors: true, wDressup: false, wMusic: false,   /* the playful widgets wait until someone switches them on */ wDesign: true, wTray: true, autoLink: true, imgFrame: true, wLearn: true, ports: true, hints: true,  mochi: 'blue', greet: true, grid: true, tilt: true, motion: true, keys: true, theme: 'system', chat: 'normal', emoji: true, noteColor: 'random', snap: false, ai: true, mobbin: true, higgs: true, chatKeep: 'board', chatMax: '60', cursor: '#ff9ec4', fancyCursor: true, colors: { light: {}, dark: {} } }, (() => { try { return JSON.parse(localStorage.getItem('mochiboard:settings') || '{}'); } catch (e) { return {}; } })());
+  const settings = Object.assign({ lang: (typeof window !== 'undefined' && window.I18N ? window.I18N.getLanguage() : 'en'), pullColors: true, imgRadius: true, panelH: {}, mochiName: '', mochiCalm: 'lively', mochiChar: true, tbSize: 'm', dblNote: true, wLayers: true, wColors: true, wDressup: false, wMusic: false,   /* the playful widgets wait until someone switches them on */ wDesign: true, wTray: true, autoLink: true, imgFrame: true, wLearn: true, ports: true, hints: true,  mochi: 'blue', greet: true, grid: true, tilt: true, motion: true, keys: true, theme: 'system', chat: 'normal', emoji: true, noteColor: 'random', snap: false, ai: true, mobbin: true, higgs: true, chatKeep: 'board', chatMax: '60', cursor: '#ff9ec4', fancyCursor: true, colors: { light: {}, dark: {} } }, (() => { try { return JSON.parse(localStorage.getItem('mochiboard:settings') || '{}'); } catch (e) { return {}; } })());
   try { if (localStorage.getItem('mochiboard:keys') === 'hide') settings.keys = false; } catch (e) {}
   // ---------- widgets snap into the left and right sidebars. Drag one by its title: little drop boxes show where it can go ----------
   // the Boards panel is pinned at the top left (it's home to your boards and Settings), everything else can move
@@ -1954,6 +1954,14 @@
   const WIDGETS = [['wLayers', () => document.querySelector('.box[data-box="layers"]')], ['wColors', () => document.querySelector('.box[data-box="colors"]')],
     ['wLearn', () => document.querySelector('.box[data-box="learn"]')], ['wDressup', () => document.querySelector('.box[data-box="dressup"]')], ['wMusic', () => document.querySelector('.box[data-box="music"]')], ['wDesign', () => $('design')], ['wTray', () => $('tray')]];
   function applySettings() {
+    if (window.I18N) {
+      if (settings.lang && window.I18N.getLanguage() !== settings.lang) {
+        window.I18N.setLanguage(settings.lang);
+      } else if (!settings.lang) {
+        settings.lang = window.I18N.getLanguage();
+      }
+      window.I18N.applyI18n();
+    }
     if ($('dzTabs')) renderDzTabs();
     document.body.classList.toggle('no-pull', settings.pullColors === false); queueMicrotask(() => applyColors()); queueMicrotask(() => applyGridShape()); queueMicrotask(() => applyToolbar());
     goos.forEach(g => g.setColors(MOCHI_COLORS[settings.mochi] || MOCHI_COLORS.blue));
@@ -2570,7 +2578,8 @@
   }
   function boardMenu(e, items) {
     $('rowMenu')?.remove(); const m = document.createElement('div'); m.id = 'rowMenu'; m.className = 'row-menu'; m.style.left = e.clientX + 'px'; m.style.top = e.clientY + 'px';
-    m.innerHTML = items.map((it, i) => it === '-' ? '<span class="rm-sep"></span>' : `<button data-i="${i}" class="${it.danger ? 'danger' : ''}">${it.label}</button>`).join('');
+    const trLabel = l => (typeof l === 'string' && window.t) ? window.t(l, l) : l;
+    m.innerHTML = items.map((it, i) => it === '-' ? '<span class="rm-sep"></span>' : `<button data-i="${i}" class="${it.danger ? 'danger' : ''}">${trLabel(it.label)}</button>`).join('');
     document.body.appendChild(m); const rr = m.getBoundingClientRect(); if (rr.bottom > innerHeight - 10) m.style.top = innerHeight - rr.height - 10 + 'px'; if (rr.right > innerWidth - 10) m.style.left = innerWidth - rr.width - 10 + 'px';
     m.onclick = ev => { const b = ev.target.closest('[data-i]'); if (!b) return; m.remove(); items[+b.dataset.i].run(); };
     setTimeout(() => addEventListener('pointerdown', function off(ev) { if (!m.contains(ev.target)) { m.remove(); removeEventListener('pointerdown', off, true); } }, true));
