@@ -3,7 +3,7 @@
 Each update gets a short line here. Mochiboard shows the new ones in Settings when an update is ready.
 Write them for people, not for code: one line, what changed and why it's nice.
 
-## November 2026 · 1.9.0 (not released yet)
+## November 2026 · 1.9.0
 
 - Tables: press B (or the new table tool) for a table on the board. Type in a cell, Tab and Enter move along (Enter on the last row adds one), the little + buttons add a row or column, and right-click → Table adds or deletes rows and columns or turns the header row off. Rows pasted from a spreadsheet, a web page or a CSV arrive as a table, and a table dropped into a doc stays a table.
 - Saved text styles: right-click styled text → Save text style. Styles sit under Board colors; click one to put the same font, size, weight, spacing, case and title color on whatever you've selected (or start a new note in it).
