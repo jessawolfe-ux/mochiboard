@@ -59,11 +59,11 @@
       tray: ['call the printer', 'idea: animated logo', 'that font from the cafe menu', 'reply to Sam', 'moodboard for spring'].map(t => card('note', { text: t })) }),
   };
   function card(type, o = {}) {
-    const size = { note: [220, 140], title: [320, 50], image: [260, 220], link: [260, 210], todo: [240, 180], swatch: [120, 150], coll: [288, 200], doc: [240, 52], canvas: [260, 180], shape: [160, 160], stamp: [56, 56], audio: [290, 150], video: [360, 246], ink: [10, 10], frame: [393, 852], box: [160, 100], text: [220, 24], icon: [28, 28], font: [300, 210] }[type] || [220, 140];
+    const size = { note: [220, 140], title: [320, 50], image: [260, 220], link: [260, 210], todo: [240, 180], swatch: [120, 150], coll: [288, 200], doc: [240, 52], canvas: [260, 180], shape: [160, 160], stamp: [56, 56], audio: [290, 150], video: [360, 246], ink: [10, 10], frame: [393, 852], box: [160, 100], text: [220, 24], icon: [28, 28], font: [300, 210], table: [360, 60] }[type] || [220, 140];
     return Object.assign({ id: uid(), type, x: 0, y: 0, w: size[0], h: size[1], r: type === 'title' ? 0 : tilt(), color: 'white' }, o);
   }
   function newBoard(name = 'Untitled board', tpl) {
-    const b = { id: uid(), name, color: COLOR_NAMES[1 + Math.floor(Math.random() * 6)], cards: [], links: [], tray: [], view: { x: 160, y: 140, z: 1 } };
+    const b = { id: uid(), name, color: COLOR_NAMES[1 + Math.floor(Math.random() * 6)], cards: [], links: [], tray: [], styles: { colors: [], text: [] }, view: { x: 160, y: 140, z: 1 } };
     if (tpl) { const t = TEMPLATES[tpl](); b.cards = t.cards; b.tray = t.tray; b.name = tpl; if (t.view) b.view = t.view; }
     return b;
   }
@@ -95,6 +95,28 @@
   }
   const looseBoards = () => boardList.filter(b => (!b.folder || !folders.some(f => f.id === b.folder)) && topLevel(b));
   const tint = c => COLORS[c] && c !== 'white' ? `var(--${c === 'pink' ? 'pink' : c + '-deep'})` : 'var(--pink)';
+  // colors for filing: boards, folders and projects each carry one, picked from the dots in the left box (or the right-click menu)
+  const FILE_COLORS = ['pink', 'butter', 'mint', 'lilac', 'sky', 'peach'];
+  const DEEP = { pink: '#f27aa8', butter: '#f3d96a', mint: '#7ad3a3', lilac: '#b89bff', sky: '#8cc1ff', peach: '#ffb48a' };
+  const ficBg = c => DEEP[c] ? `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 17 14'%3E%3Cpath d='M1.5 3A1.6 1.6 0 0 1 3.1 1.4h3.3c.5 0 .9.2 1.2.6l.9 1.1h5.4a1.6 1.6 0 0 1 1.6 1.6v6.8a1.6 1.6 0 0 1-1.6 1.6H3.1a1.6 1.6 0 0 1-1.6-1.6z' fill='%23${DEEP[c].slice(1)}' stroke='%23494848' stroke-width='1.3' stroke-linejoin='round'/%3E%3C/svg%3E")` : '';
+  const colorDots = (kind, cur) => `<div class="rm-colors">${kind === 'folder' ? `<button data-fc="" class="${cur ? '' : 'on'}" title="No color" aria-label="No color"><i class="none"></i></button>` : ''}${FILE_COLORS.map(c => `<button data-fc="${c}" class="${c === cur ? 'on' : ''}" title="${c}" aria-label="${c}"><i style="background:${tint(c)}"></i></button>`).join('')}</div>`;
+  async function setFileColor(kind, obj, c) {
+    if (kind === 'board') { if (board && board.id === obj.id) { board.color = c; save(); } else { const b = await MB.load(obj.id); if (!b) return; b.color = c; await MB.save(b); } }
+    else { const live = [...projects, ...folders].find(x => x.id === obj.id) || obj; if (c) live.color = c; else delete live.color; await saveLib(); }
+    await refreshBoards();
+  }
+  // click a row's little dot (or folder icon): just the colors
+  function colorPop(e, kind, obj) {
+    e.preventDefault(); e.stopPropagation(); $('rowMenu')?.remove();
+    const m = document.createElement('div'); m.id = 'rowMenu'; m.className = 'row-menu color-pop'; m.style.left = e.clientX + 'px'; m.style.top = e.clientY + 8 + 'px';
+    m.innerHTML = `<div class="dm-h">Color</div>${colorDots(kind, obj.color)}`; document.body.appendChild(m); fitMenu(m);
+    m.onclick = ev => { const b = ev.target.closest('[data-fc]'); if (!b) return; m.remove(); setFileColor(kind, obj, b.dataset.fc); };
+    setTimeout(() => addEventListener('pointerdown', function off(ev) { if (!m.contains(ev.target)) { m.remove(); removeEventListener('pointerdown', off, true); } }, true));
+  }
+  // any right-click menu or color pop: keep it inside the window, and Esc closes just the menu (before Home or the board hear it)
+  function fitMenu(m) { const r = m.getBoundingClientRect(); if (r.right > innerWidth - 10) m.style.left = Math.max(10, innerWidth - r.width - 10) + 'px'; if (r.bottom > innerHeight - 10) m.style.top = Math.max(10, innerHeight - r.height - 10) + 'px'; }
+  addEventListener('keydown', e => { if (e.key !== 'Escape' || !$('rowMenu')) return; $('rowMenu').remove(); $('rowSub')?.remove(); e.preventDefault(); e.stopImmediatePropagation(); }, true);
+  const shownProjects = () => projects.filter(p => !p.archived);   // archived projects stay on disk, out of the lists, until restored
   // moving a board into a folder (or out of one). A canvas that lived inside another board comes out on its own.
   async function moveBoard(id, folderId) {
     await unhook(id);
@@ -184,11 +206,11 @@
     let h = `<div class="mv-head">Move “${esc(obj.name)}” to…</div><div class="mv-list">`;
     const tree = (f, d) => { if (kind === 'folder' && f.id === obj.id) return; h += row(kind === 'board' ? f.id : 'f:' + f.id, f.name, d, FIC); subFolders(f.id).forEach(x => tree(x, d + 1)); };
     if (kind === 'board') {
-      projects.forEach(p => { h += `<div class="mv-group" style="padding-left:12px">${PIC(p.color)}<span>${esc(p.name)}</span></div>`; foldersIn(p.id).forEach(f => tree(f, 1)); if (!foldersIn(p.id).length) h += '<div class="mv-none">no folders yet</div>'; });
+      shownProjects().forEach(p => { h += `<div class="mv-group" style="padding-left:12px">${PIC(p.color)}<span>${esc(p.name)}</span></div>`; foldersIn(p.id).forEach(f => tree(f, 1)); if (!foldersIn(p.id).length) h += '<div class="mv-none">no folders yet</div>'; });
       looseFolders().forEach(f => tree(f, 0));
       h += row(null, 'Not in a folder', 0, '<i class="mv-dot"></i>');
     } else {
-      projects.forEach(p => { h += row(p.id, p.name, 0, PIC(p.color)); foldersIn(p.id).forEach(f => tree(f, 1)); });
+      shownProjects().forEach(p => { h += row(p.id, p.name, 0, PIC(p.color)); foldersIn(p.id).forEach(f => tree(f, 1)); });
       looseFolders().forEach(f => tree(f, 0));
       h += row(null, 'Not in a project', 0, '<i class="mv-dot"></i>');
     }
@@ -205,11 +227,12 @@
     e.preventDefault(); e.stopPropagation(); $('rowMenu')?.remove();
     const n = kind === 'board' ? 1 + boardList.filter(x => x.parent === obj.id).length : kind === 'folder' ? boardsUnder(obj) : foldersIn(obj.id).reduce((t, f) => t + boardsUnder(f), 0);
     const m = document.createElement('div'); m.id = 'rowMenu'; m.className = 'row-menu'; m.style.left = e.clientX + 'px'; m.style.top = e.clientY + 'px';
-    m.innerHTML = `${nameEl ? '<button data-m="ren">Rename</button>' : ''}${kind !== 'project' ? '<button data-m="move">Move to…</button>' : ''}${kind === 'board' && obj.parent ? '<button data-m="out">Make it its own board</button>' : ''}<button data-m="dup">Duplicate</button><span class="rm-sep"></span><button data-m="del" class="danger">Delete</button>`;
-    document.body.appendChild(m);
-    const r = m.getBoundingClientRect(); if (r.bottom > innerHeight - 10) m.style.top = innerHeight - r.height - 10 + 'px';
+    m.innerHTML = `${nameEl ? '<button data-m="ren">Rename</button>' : ''}${kind !== 'project' ? '<button data-m="move">Move to…</button>' : ''}${kind === 'board' && obj.parent ? '<button data-m="out">Make it its own board</button>' : ''}<button data-m="dup">Duplicate</button>${kind === 'project' ? `<button data-m="arch">${obj.archived ? 'Restore from archive' : 'Archive'}</button>` : ''}<span class="rm-sep"></span><div class="dm-h">Color</div>${colorDots(kind, obj.color)}<span class="rm-sep"></span><button data-m="del" class="danger">Delete</button>`;
+    document.body.appendChild(m); fitMenu(m);
     m.onclick = async ev => {
+      const col = ev.target.closest('[data-fc]'); if (col) { m.remove(); return setFileColor(kind, obj, col.dataset.fc); }
       const a = ev.target.closest('[data-m]')?.dataset.m; if (!a) return;
+      if (a === 'arch') { m.remove(); return archiveProject(obj, !obj.archived); }
       if (a === 'ren') { m.remove(); return inlineRename(nameEl, obj, kind === 'board' ? v => renameBoard(obj, v) : undefined); }
       if (a === 'dup') { m.remove(); return duplicate(kind, obj); }
       if (a === 'move') return moveMenu(m, kind, obj);
@@ -236,6 +259,7 @@
     r.ondblclick = e => { e.stopPropagation(); clearTimeout(tap); inlineRename(name, b, v => renameBoard(b, v)); };
     const pen = document.createElement('button'); pen.className = 'f-btn'; pen.title = 'Rename'; pen.innerHTML = FBTN.ren; r.appendChild(pen);
     pen.onclick = e => { e.stopPropagation(); clearTimeout(tap); inlineRename(name, b, v => renameBoard(b, v)); };
+    const dot = r.querySelector('i'); dot.title = 'Color'; dot.onclick = e => { clearTimeout(tap); colorPop(e, 'board', b); };
     draggable(r, 'board', b.id); dropZone(r, 'board', id => nestBoard(id, b.id)); r.oncontextmenu = e => rowMenu(e, 'board', b, name);
     const kids = boardList.filter(x => x.parent === b.id); if (!kids.length) return r;
     const frag = document.createDocumentFragment(), sub = document.createElement('div'); sub.className = 'sub-boards';
@@ -244,7 +268,8 @@
   function treeNode(obj, kind, count, kids, btns) {
     const wrap = document.createElement('div'); wrap.className = 'node ' + kind + (obj.open ? ' open' : '');
     wrap.innerHTML = `<div class="node-head"><span class="chev">▶</span><span class="${kind === 'project' ? 'pic' : 'fic'}"></span><span class="fname"></span><small>${count}</small>${btns.map(([a, t, s]) => `<button class="f-btn" data-a="${a}" title="${t}">${FBTN[a] || s}</button>`).join('')}</div><div class="node-body"></div>`;
-    if (kind === 'project') wrap.querySelector('.pic').style.background = tint(obj.color);
+    const ic = wrap.querySelector('.pic, .fic'); ic.title = 'Color'; ic.onclick = e => colorPop(e, kind, obj);
+    if (kind === 'project') ic.style.background = tint(obj.color); else if (obj.color) ic.style.backgroundImage = ficBg(obj.color);
     const name = wrap.querySelector('.fname'), body = wrap.querySelector('.node-body'); name.textContent = obj.name;
     kids.forEach(k => body.appendChild(k));
     if (!kids.length) body.innerHTML = `<div class="folder-empty">${kind === 'project' ? 'No folders yet' : 'Drag boards in here'}</div>`;
@@ -296,13 +321,15 @@
     $('treeLabel').textContent = scoped ? 'In this project' : 'Everything';
     if (scoped) { if (sp) { sp.open = true; el.appendChild(projectNode(sp)); } else { const top = folderChain(sf)[0]; top.open = true; el.appendChild(folderNode(top)); } $('homeBtn').classList.add('out'); renderCrumbs(); if (homeAt) renderHome(); return; }
     $('homeBtn').classList.remove('out');
-    projects.forEach(p => el.appendChild(projectNode(p)));
+    shownProjects().forEach(p => el.appendChild(projectNode(p)));
     looseFolders().forEach(f => el.appendChild(folderNode(f)));
     const loose = document.createElement('div'); loose.className = 'loose-zone';
     looseBoards().forEach(b => loose.appendChild(boardRow(b)));
     el.appendChild(loose);
     dropZone(loose, 'board', id => moveBoard(id, null));
     dropZone(el, 'folder', id => putFolder(id, null, null));
+    const nArch = projects.length - shownProjects().length;
+    if (nArch) { const a = document.createElement('button'); a.className = 'arch-link'; a.textContent = `Archived · ${nArch}`; a.title = 'Projects you archived: open one or restore it'; a.onclick = () => openHome('archived'); el.appendChild(a); }
     renderCrumbs(); if (homeAt) renderHome();
   }
 
@@ -316,6 +343,13 @@
   };
   addEventListener('focus', () => { if (board && !document.querySelector('[contenteditable="true"]')) window.__boardsChanged(); });   // and check again whenever you come back to the app
 
+  // ---------- archive: a project leaves the lists but keeps every folder and board; Home → Archived brings it back ----------
+  async function archiveProject(p, on) {
+    const live = projects.find(x => x.id === p.id) || p; if (on) live.archived = true; else delete live.archived;
+    await saveLib(); await refreshBoards();
+    if (on && homeAt?.level === 'project' && homeAt.id === live.id) openHome('all');
+    chirp(on ? `Archived “${live.name}”. It's under Archived whenever you want it back ✦` : `“${live.name}” is back in your projects ✦`, 4000);
+  }
   // ---------- home: zoom out to see every project, then a project's folders, then a folder's boards ----------
   let homeAt = null;   // null = closed, { level: 'all' } | { level: 'project', id } | { level: 'folder', id }
   const where = () => { const f = folders.find(x => x.id === board?.folder), p = f && projects.find(x => x.id === f.project); return { f, p }; };
@@ -331,7 +365,7 @@
   $('crumbs').onclick = async e => { const pb = e.target.closest('[data-board]')?.dataset.board; if (pb) { board.view = view; await MB.save(board); return openBoard(pb); } const g = e.target.closest('[data-go]')?.dataset.go; if (g) openHome(g); };
   $('homeBtn').onclick = () => openHome('all');
   $('brand').onclick = () => openHome('all');
-  $('homeBack').onclick = () => { if (!homeAt) return; const f = homeAt.level === 'folder' && folders.find(x => x.id === homeAt.id); openHome(f && hasParent(f) ? 'folder:' + f.parent : f && f.project && projects.some(p => p.id === f.project) ? 'project:' + f.project : 'all'); };
+  $('homeBack').onclick = () => { if (!homeAt) return; const f = homeAt.level === 'folder' && folders.find(x => x.id === homeAt.id); const pa = homeAt.level === 'project' && projects.find(p => p.id === homeAt.id)?.archived; openHome(pa ? 'archived' : f && hasParent(f) ? 'folder:' + f.parent : f && f.project && projects.some(p => p.id === f.project) ? 'project:' + f.project : 'all'); };
   function openHome(go = 'all') { const [level, id] = go.split(':'); homeAt = { level, id }; $('home').classList.add('on'); stage.classList.add('at-home'); stopPlacing(); refreshBoards(); }
   function closeHome() { if (!homeAt) return; homeAt = null; $('home').classList.remove('on'); stage.classList.remove('at-home'); refreshBoards(); }
   const miniCache = new Map();
@@ -361,16 +395,17 @@
     const f = level === 'folder' ? folders.find(x => x.id === id) : null;
     if ((level === 'project' && !p) || (level === 'folder' && !f)) { homeAt = { level: 'all' }; return renderHome(); }
     const chainF = f ? folderChain(f) : [];
-    crumbs.innerHTML = `<button data-go="all">All projects</button>` + (p ? `<i>/</i><button data-go="project:${p.id}"></button>` : '') + chainF.map(x => `<i>/</i><button data-go="folder:${x.id}"></button>`).join('');
-    const cb = crumbs.querySelectorAll('button'); if (p) cb[1].textContent = p.name; chainF.forEach((x, i) => cb[i + (p ? 2 : 1)].textContent = x.name);
+    crumbs.innerHTML = `<button data-go="all">All projects</button>` + (level === 'archived' || p?.archived ? '<i>/</i><button data-go="archived">Archived</button>' : '') + (p ? `<i>/</i><button data-go="project:${p.id}"></button>` : '') + chainF.map(x => `<i>/</i><button data-go="folder:${x.id}"></button>`).join('');
+    const cb = [...crumbs.querySelectorAll('button:not([data-go="archived"])')]; if (p) cb[1].textContent = p.name; chainF.forEach((x, i) => cb[i + (p ? 2 : 1)].textContent = x.name);
     $('home').classList.toggle('deep', level !== 'all');
-    $('homeTitle').textContent = f ? f.name : p ? p.name : 'Your projects';
-    $('homeSub').textContent = f ? [subFolders(f.id).length ? plural(subFolders(f.id).length, 'folder') : '', plural(boardsIn(f.id).length, 'board')].filter(Boolean).join(' · ') : p ? plural(foldersIn(p.id).length, 'folder') : 'Every project, with its folders and boards inside.';
+    $('homeTitle').textContent = f ? f.name : p ? p.name : level === 'archived' ? 'Archived projects' : 'Your projects';
+    $('homeSub').textContent = level === 'archived' ? 'Out of your lists, kept safe. Open one to look inside, or restore it.' : f ? [subFolders(f.id).length ? plural(subFolders(f.id).length, 'folder') : '', plural(boardsIn(f.id).length, 'board')].filter(Boolean).join(' · ') : p ? plural(foldersIn(p.id).length, 'folder') : 'Every project, with its folders and boards inside.';
     const add = (label, run) => { const a = document.createElement('button'); a.className = 'tile add'; a.innerHTML = `<span>+</span>${label}`; a.onclick = run; grid.appendChild(a); };
     const del = async (arr, obj, fix) => { fix(); if (arr === 'p') projects = projects.filter(x => x !== obj); else folders = folders.filter(x => x !== obj); await saveLib(); refreshBoards(); };
     const projectTile = pp => {
       const fs = foldersIn(pp.id), nb = fs.reduce((n, x) => n + boardsUnder(x), 0);
       const t = tile('project', pp, `${plural(fs.length, 'folder')} · ${plural(nb, 'board')}`, () => openHome('project:' + pp.id), [['ren', 'Rename', '✎']]);
+      if (pp.archived) { t.classList.add('archived'); const rb = document.createElement('button'); rb.className = 'restore-btn'; rb.textContent = 'Restore'; rb.onclick = e => { e.stopPropagation(); archiveProject(pp, false); }; t.appendChild(rb); }
       const art = t.querySelector('.tile-art'), chips = `<div class="chips">${fs.slice(0, 3).map(x => `<span class="mf"><i></i>${esc(x.name)}</span>`).join('')}</div>`;
       const first = fs.map(x => boardsIn(x.id)[0]).find(Boolean);
       if (pp.cover) { art.classList.add('cover'); art.style.background = `url('${pp.cover}')`; art.innerHTML = chips; }
@@ -389,6 +424,7 @@
     };
     const folderTile = ff => {
       const bs = boardsIn(ff.id), ns = subFolders(ff.id).length, t = tile('folder', ff, [ns ? plural(ns, 'folder') : '', plural(bs.length, 'board')].filter(Boolean).join(' · '), () => openHome('folder:' + ff.id), [['ren', 'Rename', '✎']]);
+      if (DEEP[ff.color]) t.style.setProperty('--fcol', COLORS[ff.color]);
       const art = t.querySelector('.tile-art'); art.innerHTML = '<div class="back"></div><div class="tab"></div><div class="peek"></div><div class="front"><span class="face"><b></b><i></i><b></b></span></div>';
       const shown = bs.slice(0, 3); art.querySelector('.peek').style.setProperty('--mid', (shown.length - 1) / 2);
       shown.forEach(async (b, i) => { const d = document.createElement('div'); d.className = 'paper'; d.style.setProperty('--i', i); d.style.zIndex = i === Math.floor((shown.length - 1) / 2) ? 3 : 1; d.innerHTML = await mini(b.id); art.querySelector('.peek').appendChild(d); });
@@ -403,11 +439,16 @@
       draggable(t, 'board', b.id); dropZone(t, 'board', id => nestBoard(id, b.id)); t.oncontextmenu = e => rowMenu(e, 'board', b, t.querySelector('.tile-meta b')); return t;
     };
     const section = label => { const h = document.createElement('div'); h.className = 'home-sec'; h.textContent = label; grid.appendChild(h); };
-    if (level === 'all') {
-      projects.forEach(pp => grid.appendChild(projectTile(pp)));
+    if (level === 'archived') {
+      const arch = projects.filter(x => x.archived); arch.forEach(pp => grid.appendChild(projectTile(pp)));
+      if (!arch.length) grid.insertAdjacentHTML('beforeend', '<p class="home-empty">Nothing archived. Right-click a project → Archive to tuck it away.</p>');
+    } else if (level === 'all') {
+      shownProjects().forEach(pp => grid.appendChild(projectTile(pp)));
       add('New project', async () => { const pp = makeProject(uniqueName(projects, 'New project')); await saveLib(); await refreshBoards(); const t = [...grid.querySelectorAll('.tile.project')].pop(); inlineRename(t.querySelector('.tile-meta b'), pp); });
       if (looseFolders().length) { section('Folders not in a project · drag onto a project to file'); looseFolders().forEach(ff => grid.appendChild(folderTile(ff))); }
       if (looseBoards().length) { section('Boards not in a folder'); looseBoards().forEach(b => grid.appendChild(boardTile(b))); }
+      const nArch = projects.filter(x => x.archived).length;
+      if (nArch) { const a = document.createElement('button'); a.className = 'home-arch'; a.innerHTML = `Archived <b>${nArch}</b>`; a.onclick = () => openHome('archived'); grid.appendChild(a); }
     } else if (level === 'project') {
       foldersIn(p.id).forEach(ff => grid.appendChild(folderTile(ff)));
       add('New folder', async () => { const ff = makeFolder(uniqueName(folders, 'New folder'), p.id); await saveLib(); await refreshBoards(); const t = [...grid.querySelectorAll('.tile.folder')].pop(); inlineRename(t.querySelector('.tile-meta b'), ff); });
@@ -428,11 +469,15 @@
     const rd = new FileReader(); rd.onload = () => { const im = new Image(); im.onload = () => { const k = Math.min(1, 720 / im.width), cv = document.createElement('canvas'); cv.width = im.width * k; cv.height = im.height * k;
       cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height); p.cover = cv.toDataURL('image/jpeg', .86); saveLib().then(refreshBoards); }; im.src = rd.result; }; rd.readAsDataURL(file); };
 
+  // a board's saved looks live together in board.styles: colors (from color cards) and text (from Save text style)
+  // boards from before 1.9 kept them loose as board.palette and board.textStyles: move them in
+  function normStyles(b) { const s = b.styles || {};
+    b.styles = { ...s, colors: s.colors || b.palette || [], text: s.text || b.textStyles || [] }; delete b.palette; delete b.textStyles; }
   async function openBoard(id) {
     // an edit still waiting to save belongs to the board you're leaving: save it first
     if (saveT && board) { clearTimeout(saveT); saveT = 0; board.view = view; await MB.save(board); }
     const b = await MB.load(id); if (!b) return;
-    miniCache.clear(); board = b; if (chatOpen()) setTimeout(renderChat, 0); board.palette = board.palette || []; setTimeout(resetHistory, 0); view = Object.assign({ x: 160, y: 140, z: 1 }, b.view); sel.clear(); editing = null; focusSet = null; closeColor(); renderPalette();
+    miniCache.clear(); board = b; if (chatOpen()) setTimeout(renderChat, 0); normStyles(board); setTimeout(resetHistory, 0); view = Object.assign({ x: 160, y: 140, z: 1 }, b.view); sel.clear(); editing = null; focusSet = null; closeColor(); renderPalette();
     board.cards.forEach(c => { if (c.type === 'audio' && c.rec) { c.rec = false; c.paused = false; if (!c.src) c.txNote = 'This recording got interrupted. Tap Replace to record again.'; } });
     board.cards.forEach(c => { if (c.type === 'canvas' && c.board) { const kb = boardList.find(x => x.id === c.board); if (kb && kb.name !== c.text) c.text = kb.name; } });
     $('boardName').value = board.name; renderAll(); refreshBoards(); try { localStorage.setItem('mochiboard:last', id); } catch (e) {}
@@ -440,16 +485,21 @@
   let saveT = 0;
   // ---------- undo / redo: a snapshot of the board after each change settles ----------
   let past = [], future = [], restoring = false, snapT = 0;
-  const stateOf = () => JSON.stringify({ cards: board.cards, links: board.links, tray: board.tray, palette: board.palette });
-  function remember() { if (restoring || !board) return; const st = stateOf(); if (past[past.length - 1] !== st) { past.push(st); if (past.length > 80) past.shift(); future = []; } }
+  const stateOf = () => JSON.stringify({ cards: board.cards, links: board.links, tray: board.tray, styles: board.styles });
+  let afterTravel = false;   // right after an undo/redo, nothing you did has changed the board yet
+  // a title that isn't fixed sizes itself to its words, so its w/h are measurements, not something you did
+  const sansTitleSize = st => { try { const o = JSON.parse(st); (o.cards || []).forEach(c => { if (c.type === 'title' && !c.fixedW) { delete c.w; delete c.h; } }); return JSON.stringify(o); } catch (e) { return st; } };
+  function remember() { if (restoring || !board) return; const st = stateOf();
+    if (afterTravel && past.length && sansTitleSize(st) === sansTitleSize(past[past.length - 1])) { past[past.length - 1] = st; return; }   // only the board settling after an undo: not a new step
+    afterTravel = false; if (past[past.length - 1] !== st) { past.push(st); if (past.length > 80) past.shift(); future = []; } }
   function resetHistory() { past = board ? [stateOf()] : []; future = []; }
   function travel(dir) {
-    clearTimeout(snapT); remember();                          // catch the very latest change first
+    clearTimeout(snapT); remember();   // catch the very latest change first (just a title re-measuring after the last undo isn't one: see remember)
     const from = dir < 0 ? past : future, to = dir < 0 ? future : past;
     if (dir < 0 ? past.length < 2 : !future.length) return say(dir < 0 ? 'Nothing left to undo' : 'Nothing to redo', 1800);
     if (dir < 0) future.push(past.pop()); else past.push(future.pop());
     const st = JSON.parse(past[past.length - 1]); restoring = true;
-    Object.assign(board, st); sel.clear(); selWire = null; selWires.clear(); endEdit(); renderAll(); renderPalette(); save(); restoring = false;
+    Object.assign(board, st); sel.clear(); selWire = null; selWires.clear(); endEdit(); renderAll(); renderPalette(); save(); restoring = false; afterTravel = true;
   }
   // every card keeps real numbers for its place and size (a bad one would break saving)
   function cleanNumbers() { board.cards.forEach(c => { ['x', 'y'].forEach(k => { if (!Number.isFinite(c[k])) c[k] = 0; }); ['w', 'h'].forEach(k => { if (!Number.isFinite(c[k]) || c[k] <= 0) c[k] = k === 'w' ? 200 : 100; }); ['r', 'rot'].forEach(k => { if (c[k] != null && !Number.isFinite(c[k])) c[k] = 0; }); }); }
@@ -511,7 +561,8 @@
     // Spotify players or videos on the board, which otherwise make Safari stretch an old picture of the board)
     if (world.style.zoom && Math.abs(view.z - +world.style.zoom) < 1e-6) world.style.transform = `translate(${view.x / view.z}px, ${view.y / view.z}px)`;
     else { world.style.zoom = ''; world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.z})`; }
-    if (typeof rhEl !== 'undefined') rhEl.style.setProperty('--iz', (1 / view.z).toFixed(4));   // the resize corner stays the same size on screen at any zoom (set on it alone: on the whole board, Safari restyled every card each zoom step)
+    if (typeof rhEl !== 'undefined') rhEl.style.setProperty('--iz', (1 / view.z).toFixed(4));
+    cardsEl.querySelectorAll('.card.table').forEach(t => t.style.setProperty('--iz', (1 / view.z).toFixed(4)));   // the table's + buttons too (only tables, for the same reason)   // the resize corner stays the same size on screen at any zoom (set on it alone: on the whole board, Safari restyled every card each zoom step)
     stage.classList.toggle('far', view.z < .55); stage.classList.add('moving'); clearTimeout(movingT); movingT = setTimeout(() => { stage.classList.remove('moving');
       // real zoom only where it's needed: a Spotify player or video on the board makes Safari stretch an old picture of the board, so lay it out fresh there.
       // Boards without them are already crisp with the fast scale, and skipping the re-layout keeps them snappier.
@@ -618,6 +669,9 @@
       case 'text': return `<div class="text tx">${esc(c.text || '')}</div>`;
       case 'coll': return `<div class="coll-head"><span class="text">${esc(c.text)}</span></div><div class="coll-frame"></div>${(c.kids || []).length ? '' : '<div class="coll-empty">Drop cards here</div>'}`;
       case 'title': return `<div class="text">${esc(c.text)}</div>`;
+      case 'table': { const rows = c.rows?.length ? c.rows : [['']], hd = c.head !== false;   // a table: rows of cells, the first row is the header unless you turn it off
+        return `<table class="tb${hd ? ' has-head' : ''}"><tbody>${rows.map((r, i) => `<tr>${r.map((v, j) => { const tg = i === 0 && hd ? 'th' : 'td'; return `<${tg} data-r="${i}" data-c="${j}">${esc(v)}</${tg}>`; }).join('')}</tr>`).join('')}</tbody></table>`
+          + `<button class="tb-add tb-addr" data-act="tb-row" title="Add a row" aria-label="Add a row">+</button><button class="tb-add tb-addc" data-act="tb-col" title="Add a column" aria-label="Add a column">+</button>`; }
       case 'image': {
         // a crop shows a window onto the picture: the picture is scaled up and shifted so only the kept part shows
         const k = !c.cropEdit && c.crop, st = k ? `position:absolute;width:${100 / k.w}%;height:${100 / k.h}%;left:${-k.x / k.w * 100}%;top:${-k.y / k.h * 100}%;object-fit:fill;border-radius:0` : '';
@@ -632,7 +686,7 @@
   }
   // which cards can be tilted by hand: everything except the things that hold other things (sections, screens, collections) and wireframe pieces (they rotate their own way)
   const TILTS = c => !['section', 'frame', 'coll', 'ink', 'box', 'text', 'icon'].includes(c.type);   // (the wireframe list WF isn't set up yet when the first cards draw)
-  const SIZED_T = ['note', 'todo', 'title', 'shape', 'coll'];
+  const SIZED_T = ['note', 'todo', 'title', 'shape', 'coll', 'table'];
   // strokes: boxes and screens get a border (solid or dashed); titles, wireframe text and icons get an outline around the letters
   const STROKABLE = ['box', 'frame', 'title', 'text', 'icon', 'path', 'shape', 'image'], STROKE_TEXT = ['title', 'text', 'icon'];
   const canStroke = c => STROKABLE.includes(c.type) && !(c.type === 'shape' && (c.shape === 'line' || c.shape === 'bool')) && !(c.type === 'image' && isMasked(c));
@@ -685,6 +739,7 @@
     if (!el) { el = document.createElement('div'); el.dataset.id = c.id; cardsEl.appendChild(el); if (pop) el.classList.add('pop'); }
     el.className = `card ${c.type}` + (sel.has(c.id) ? ' sel' : '') + (focusSet && !focusSet.has(c.id) ? ' dim' : '') + (pop ? ' pop' : '');
     Object.assign(el.style, { left: c.x + 'px', top: c.y + 'px', width: titleW(c), height: c.type === 'title' ? 'auto' : c.h + 'px' });
+    if (c.type === 'table') el.style.setProperty('--iz', (1 / view.z).toFixed(4));
     el.classList.toggle('ly-off', !!c.hidden); el.classList.toggle('ly-lock', !!c.locked); el.classList.toggle('fixedw', !!c.fixedW); applyStroke(c, el); shadowVars(c, el);
     if (c.type === 'title' || c.type === 'text') el.classList.toggle('no-fill', (c.type === 'title' ? c.tc : c.color) === 'none'); if (SIZED_T.includes(c.type)) { el.style.setProperty('--ta', c.align || (c.type === 'shape' ? 'center' : 'left'));
       el.style.setProperty('--tt', { upper: 'uppercase', lower: 'lowercase', title: 'capitalize' }[c.tcase] || 'none');   // Case: how the words show (what you typed stays as typed)
@@ -1049,7 +1104,7 @@
     if (c.type === 'section') return lyText(c.text) || 'Section';
     if (c.ln) return c.ln;
     const t = {
-      frame: c.name || 'Screen', coll: c.name || 'Collection', note: lyText(c.name) || lyText(c.text), text: lyText(c.text), title: lyText(c.text), todo: lyText(c.text) || lyText(c.items?.[0]?.t),
+      frame: c.name || 'Screen', coll: c.name || 'Collection', note: lyText(c.name) || lyText(c.text), text: lyText(c.text), title: lyText(c.text), todo: lyText(c.text) || lyText(c.items?.[0]?.t), table: 'Table' + ((c.rows?.[0] || []).filter(v => (v || '').trim()).length ? ' · ' + lyText(c.rows[0].filter(v => (v || '').trim()).join(', ')) : ''),
       image: c.tagText || 'Image', link: c.title || (c.url ? host(c.url) : 'Link'), doc: c.text || 'Doc', canvas: c.text || 'Canvas', swatch: c.label || (c.hex || '').toUpperCase(),
       shape: (c.kit && lyText(c.text)) || SHAPE_N[c.shape || 'rect'], path: c.closed ? 'Pen shape' : 'Pen line', stamp: 'Stamp', icon: c.name || 'Icon', audio: 'Voice memo', video: c.title || 'Video', spotify: c.title || 'Spotify', ink: 'Drawing', box: c.img ? 'Image spot' : 'Box', font: c.font || 'DM Sans',
     }[c.type];
@@ -1153,7 +1208,7 @@
         if (ok) { remember(); if (n.kind === 'group') n.ids.forEach(i => { const c = byId(i); if (c) c.gn = v || undefined; });
           else { const c = n.c; if (c.type === 'frame' || c.type === 'coll') { c.name = v || c.name; renderCard(c); }   // frames and collections rename on the board too
             else if (c.type === 'section') { if (v) { c.text = v; renderCard(c); } }
-            else if (c.type === 'swatch') { if (v && v !== c.label) { const p = board.palette.find(x => x.hex === c.hex); c.label = v; c.autoName = false; if (p) { p.name = v; renderPalette(); } renderCard(c); chirp(`Renamed the color to “${v}” ✓`, 2600); } }   // a color card: its color gets the new name (and the saved board color too)
+            else if (c.type === 'swatch') { if (v && v !== c.label) { const p = board.styles.colors.find(x => x.hex === c.hex); c.label = v; c.autoName = false; if (p) { p.name = v; renderPalette(); } renderCard(c); chirp(`Renamed the color to “${v}” ✓`, 2600); } }   // a color card: its color gets the new name (and the saved board color too)
             else c.ln = v && v !== layerName({ ...c, ln: '' }) ? v : undefined; }
           save(); }
         renderLayers(); };
@@ -1306,7 +1361,7 @@
   // notes and checklists fit their words, like auto-height in Figma: taller as you type, back down as you delete,
   // but never shorter than the height you gave the card yourself (c.userH, remembered the first time you edit or resize it)
   function fitText(c) {
-    if (!c || !['note', 'todo'].includes(c.type) || parentOf(c.id)) return; const el = cardsEl.querySelector(`[data-id="${c.id}"]`), b = el?.querySelector('.body'); if (!b) return;
+    if (!c || !['note', 'todo', 'table'].includes(c.type) || parentOf(c.id)) return; const el = cardsEl.querySelector(`[data-id="${c.id}"]`), b = el?.querySelector('.body'); if (!b) return;
     if (c.userH == null) c.userH = c.h;
     const was = el.style.height; el.style.height = 'auto'; b.style.height = 'auto'; const need = Math.ceil(b.offsetHeight) + 2; b.style.height = ''; el.style.height = was;
     const h = Math.max(c.userH, need); if (Math.abs(h - c.h) > 1) { c.h = h; el.style.height = h + 'px'; if (typeof renderWires === 'function') renderWires(); }
@@ -1328,6 +1383,68 @@
     editField(e2, e2.querySelector('.tag'), v => c.tagText = v.trim(), () => { if (!c.tagText) { delete c.tagText; renderCard(c); if (sel.has(c.id)) selectOnly([c.id]); save(); } });   // (clicking elsewhere already moved the selection; leave it there)
   }
   let lastTap = {};
+  // ---------- tables: type in a cell; Tab and Enter move on (and add a row at the end), right-click for rows and columns ----------
+  let tbLast = { id: null, t: 0 };   // the table you just left a cell of: a click on another of its cells keeps typing there
+  function editCell(c, el, cell) {
+    if (!cell) return; const r = +cell.dataset.r, k = +cell.dataset.c;
+    const go = (r2, k2) => { const n = cardsEl.querySelector(`[data-id="${c.id}"] [data-r="${r2}"][data-c="${k2}"]`); if (n) startEdit(c.id, n); };
+    const grow = () => { c.rows.push(Array(c.rows[0].length).fill('')); renderCard(c); fitText(c); save(); };
+    editField(el, cell, v => { c.rows[r][k] = v; }, () => { tbLast = { id: c.id, t: Date.now() }; });
+    cell.onkeydown = ev => {
+      const cols = c.rows[0].length;
+      if (ev.key === 'Tab') { ev.preventDefault(); ev.stopPropagation(); let r2 = r, k2 = k + (ev.shiftKey ? -1 : 1); if (k2 >= cols) { k2 = 0; r2++; } if (k2 < 0) { k2 = cols - 1; r2--; } if (r2 < 0) return;
+        cell.onblur = null; endEdit(); if (r2 >= c.rows.length) grow(); go(r2, k2); }
+      else if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ev.stopPropagation(); cell.onblur = null; endEdit(); if (r + 1 >= c.rows.length) grow(); go(r + 1, k); }
+      else if (ev.key === 'Enter') ev.preventDefault();   // a cell is one line (Shift+Enter would show a break that can't be kept)
+      else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); cell.blur(); selectOnly([c.id]); }
+    };
+    // paste as plain text; spreadsheet cells (tabs / several rows) spread out from this cell, the way a spreadsheet does
+    cell.onpaste = ev => {
+      ev.preventDefault(); ev.stopPropagation(); const txt = (ev.clipboardData?.getData('text/plain') || '').replace(/\r/g, '');
+      const grid = /\t/.test(txt) ? txt.replace(/\n+$/, '').split('\n').map(l => l.split('\t')) : null;
+      if (!grid || (grid.length === 1 && grid[0].length === 1)) return document.execCommand('insertText', false, txt.replace(/\s+/g, ' ').trim());
+      remember(); cell.onblur = null; endEdit();
+      const need = k + Math.max(...grid.map(g => g.length)); if (need > c.rows[0].length) c.rows.forEach(row => row.push(...Array(need - row.length).fill('')));
+      while (c.rows.length < r + grid.length && c.rows.length < 300) c.rows.push(Array(c.rows[0].length).fill(''));
+      grid.forEach((g, i) => g.forEach((v, j) => { if (c.rows[r + i]) c.rows[r + i][k + j] = v.replace(/\s+/g, ' ').trim(); }));
+      if (c.w < c.rows[0].length * 110) c.w = Math.min(1400, c.rows[0].length * 110);
+      renderCard(c); fitText(c); selectOnly([c.id]); save(); chirp(`Pasted ${grid.length} × ${Math.max(...grid.map(g => g.length))} ✦`);
+    };
+  }
+  function tableEdit(c, what, at) {
+    remember(); endEdit(); const cols = c.rows[0].length;
+    if (what === 'row+') c.rows.splice(at ?? c.rows.length, 0, Array(cols).fill(''));
+    if (what === 'col+') { c.rows.forEach(row => row.splice(at ?? cols, 0, '')); if (c.w < (cols + 1) * 110) c.w = (cols + 1) * 110; }
+    if (what === 'row-' && c.rows.length > 1) c.rows.splice(at, 1);
+    if (what === 'col-' && cols > 1) c.rows.forEach(row => row.splice(at, 1));
+    if (what === 'head') { if (c.head === false) delete c.head; else c.head = false; }
+    if (what === 'row-' || what === 'col-') c.userH = 40; renderCard(c); fitText(c); selectOnly([c.id]); save();   // a height you set stays, unless rows go away
+    if (what === 'row+' || what === 'col+') { const r2 = what === 'row+' ? at ?? c.rows.length - 1 : 0, k2 = what === 'col+' ? at ?? c.rows[0].length - 1 : 0; setTimeout(() => startEdit(c.id, cardsEl.querySelector(`[data-id="${c.id}"] [data-r="${r2}"][data-c="${k2}"]`)), 0); }
+  }
+  function tableMenu(cs, e) {
+    const c = cs.length === 1 && cs[0].type === 'table' && cs[0]; if (!c) return [];
+    const cell = e.target.closest?.('td, th'), r = cell ? +cell.dataset.r : c.rows.length - 1, k = cell ? +cell.dataset.c : c.rows[0].length - 1;
+    return [{ label: 'Table', sub: [
+      { label: 'Add row above', run: () => tableEdit(c, 'row+', r) }, { label: 'Add row below', run: () => tableEdit(c, 'row+', r + 1) },
+      { label: 'Add column left', run: () => tableEdit(c, 'col+', k) }, { label: 'Add column right', run: () => tableEdit(c, 'col+', k + 1) },
+      ...(c.rows.length > 1 ? [{ label: 'Delete row', run: () => tableEdit(c, 'row-', r) }] : []), ...(c.rows[0].length > 1 ? [{ label: 'Delete column', run: () => tableEdit(c, 'col-', k) }] : []),
+      { label: c.head === false ? 'Make the first row a header' : 'Plain first row', run: () => tableEdit(c, 'head') }] }];
+  }
+  // pasted rows from a spreadsheet (tabs), a table copied from a web page or doc, or CSV become a table card
+  function tableFrom(text, html) {
+    const tidy = rows => { rows = rows.map(r => r.map(v => String(v ?? '').replace(/\s+/g, ' ').trim())).filter(r => r.some(Boolean)).slice(0, 300); const n = Math.max(...rows.map(r => r.length)); return rows.length >= 2 && n >= 2 ? rows.map(r => [...r, ...Array(n - r.length).fill('')].slice(0, 30)) : null; };
+    const lines = (text || '').replace(/\r/g, '').split('\n').filter(l => l.trim());
+    if (lines.length >= 2 && lines.every(l => l.includes('\t'))) return tidy(lines.map(l => l.split('\t')));
+    if (html && /<table/i.test(html)) { const d = new DOMParser().parseFromString(html, 'text/html'), t = d.querySelector('table'); if (t) return tidy([...t.querySelectorAll('tr')].map(tr => [...tr.children].map(td => td.textContent))); }
+    const csv = l => { const out = []; let cur = '', q = false; for (let i = 0; i < l.length; i++) { const ch = l[i]; if (q) { if (ch === '"' && l[i + 1] === '"') { cur += '"'; i++; } else if (ch === '"') q = false; else cur += ch; } else if (ch === '"') q = true; else if (ch === ',') { out.push(cur); cur = ''; } else cur += ch; } out.push(cur); return out; };
+    // commas only make a table when it really looks like data: 3+ lines or 3+ columns, and no line ends like a sentence (an address or a two-line message stays text)
+    if (lines.length >= 2 && !lines.some(l => /[.!?…]["')]?\s*$/.test(l.trim()))) { const rows = lines.map(csv), n = rows[0].length; if (n >= 2 && (lines.length >= 3 || n >= 3) && rows.every(r => r.length === n)) return tidy(rows); }
+    return null;
+  }
+  function addTable(rows, at) {
+    const p = at || centerWorld(), cols = rows[0].length, c = card('table', { rows, w: Math.min(900, Math.max(260, cols * 130)), h: 60, r: 0 });
+    c.x = p.x - c.w / 2; c.y = p.y - 40; addCard(c); fitText(c); selectOnly([c.id]); save(); return c;
+  }
   function startEdit(id, target) {
     const el = cardsEl.querySelector(`[data-id="${id}"]`), c = byId(id); if (!el || !c) return;
     if (target && target.closest('.tag')) return editTag(c);
@@ -1341,6 +1458,7 @@
     if (c.type === 'canvas') return editField(el, el.querySelector('.text'), v => c.text = v, () => renameChild(c));
     if (c.type === 'link' && !c.url) return wireLinkInput(c);
     if (c.type === 'audio') { if (target && target.closest('.au-tx') && c.text) return editField(el, el.querySelector('.au-tx'), v => c.text = v); return editField(el, el.querySelector('.au-top .text'), v => c.title = v); }
+    if (c.type === 'table') return editCell(c, el, (target && target.closest('td, th')) || el.querySelector('td, th'));
     const li = target && target.closest('li');
     if (li && c.type === 'todo') { const i = +li.dataset.i, sp = li.querySelector('span');
       const edit = (j, end) => setTimeout(() => { const s2 = cardsEl.querySelector(`[data-id="${c.id}"] li[data-i="${j}"] span`); if (!s2) return; startEdit(c.id, s2); if (end) { const r = document.createRange(); r.selectNodeContents(s2); r.collapse(false); const sl = getSelection(); sl.removeAllRanges(); sl.addRange(r); } }, 0);
@@ -1470,10 +1588,10 @@
       const k = Math.max(.2, Math.min(drag.w0 * 12 / drag.w0, Math.abs(kx - 1) >= Math.abs(ky - 1) ? kx : ky));
       c.w = Math.round(drag.w0 * k); c.h = Math.round(drag.h0 * k);
       if (SIZED.includes(c.type)) { const m = +(drag.fs0 * k).toFixed(4), hit = Object.keys(FS).find(z => Math.abs(FS[z] - m) < .001); if (hit === 'm') delete c.fs; else c.fs = hit || m; el.style.setProperty('--fs', fsMul(c)); }
-      if (c.type === 'title' && !c.fixedW) { c.fixedW = true; el.classList.add('fixedw'); } if (c.type === 'note' || c.type === 'todo') c.userH = c.h;
+      if (c.type === 'title' && !c.fixedW) { c.fixedW = true; el.classList.add('fixedw'); } if (c.type === 'note' || c.type === 'todo' || c.type === 'table') c.userH = c.h;
       el.style.width = c.w + 'px'; if (c.type !== 'title') el.style.height = c.h + 'px'; else c.h = el.offsetHeight; renderWires(); return;
     }
-    if (drag.mode === 'resize') { const c = byId(drag.id); c.w = Math.max(80, drag.w0 + w.x - drag.sx); c.h = Math.max(50, drag.h0 + w.y - drag.sy); const el = cardsEl.querySelector(`[data-id="${c.id}"]`); if (c.type === 'title' && !c.fixedW) { c.fixedW = true; el.classList.add('fixedw'); } if (c.type === 'note' || c.type === 'todo') c.userH = c.h; el.style.width = c.w + 'px'; el.style.setProperty('--cw', c.w + 'px'); el.classList.toggle('tiny', c.w < 140 || c.h < 90); if (c.type !== 'title') el.style.height = c.h + 'px'; else c.h = el.offsetHeight; renderWires(); }
+    if (drag.mode === 'resize') { const c = byId(drag.id); c.w = Math.max(80, drag.w0 + w.x - drag.sx); c.h = Math.max(50, drag.h0 + w.y - drag.sy); const el = cardsEl.querySelector(`[data-id="${c.id}"]`); if (c.type === 'title' && !c.fixedW) { c.fixedW = true; el.classList.add('fixedw'); } if (c.type === 'note' || c.type === 'todo' || c.type === 'table') c.userH = c.h; el.style.width = c.w + 'px'; el.style.setProperty('--cw', c.w + 'px'); el.classList.toggle('tiny', c.w < 140 || c.h < 90); if (c.type !== 'title') el.style.height = c.h + 'px'; else c.h = el.offsetHeight; renderWires(); }
     if (drag.mode === 'gresize' && drag.multi && e.shiftKey) { const d = drag, kx = (d.bw + w.x - d.sx) / d.bw, ky = (d.bh + w.y - d.sy) / d.bh, k = Math.max(.15, Math.abs(kx - 1) >= Math.abs(ky - 1) ? kx : ky);
       d.items.forEach(it => { const c = it.c; c.x = d.bx + (it.x - d.bx) * k; c.y = d.by + (it.y - d.by) * k; c.w = Math.max(8, it.w * k); c.h = Math.max(8, it.h * k);
         if (SIZED.includes(c.type)) { const m = +(it.fs0 * k).toFixed(4), hit = Object.keys(FS).find(z => Math.abs(FS[z] - m) < .001); if (hit === 'm') delete c.fs; else c.fs = hit || m; }
@@ -1554,8 +1672,8 @@
           startEdit(pid, under); } else lastTap = { id: pid, t: now };
       }
     }
-    if (d.mode === 'resize') save();
-    if (d.mode === 'gresize') { d.items.forEach(it => { renderCard(it.c); if (it.c.type === 'note' || it.c.type === 'todo') it.c.userH = it.c.h; }); selectOnly(d.items.map(it => it.c.id)); save(); }
+    if (d.mode === 'resize') { const rc = byId(d.id); if (rc && rc.type === 'table') fitText(rc); save(); }   // a table never ends shorter than its rows
+    if (d.mode === 'gresize') { d.items.forEach(it => { renderCard(it.c); if (['note', 'todo', 'table'].includes(it.c.type)) it.c.userH = it.c.h; }); selectOnly(d.items.map(it => it.c.id)); save(); }
     if (d.mode === 'bend') save();
     if (d.mode === 'mrotate' && !d.single) mrotKeep = { key: selKey(d.items.map(it => it.c)), anchor: d.anchor };   // the dot stays on the piece that was on top
     if (d.mode === 'mrotate') { $('rotBadge').classList.remove('on'); d.items.forEach(it => { renderCard(it.c); cardsEl.querySelector(`[data-id="${it.c.id}"]`)?.classList.remove('tilting'); }); selectOnly(d.selIds || d.items.map(it => it.c.id)); save(); $('selbar').dataset.key = ''; }
@@ -1594,6 +1712,8 @@
     if (act && act.startsWith('vd-')) return videoAct(c, act, e);
     if (act && act.startsWith('au-')) return audioAct(c, act, e);
     if (act === 'colors') pullColors(c);
+    if (act === 'tb-row' || act === 'tb-col') return tableEdit(c, act === 'tb-row' ? 'row+' : 'col+');
+    const tcell = e.target.closest('td, th'); if (tcell && c.type === 'table' && !tcell.isContentEditable && tbLast.id === c.id && Date.now() - tbLast.t < 450) return startEdit(c.id, tcell);
     if (act === 'item') { c.items = c.items || []; c.items.push({ t: 'new thing', done: false }); renderCard(c); fitText(c); save(); }
     if (act === 'item-x') { const i = +e.target.closest('li').dataset.i; remember(); endEdit(); c.items.splice(i, 1); renderCard(c); fitText(c); selectOnly([c.id]); save(); return; }
     const li = e.target.closest('li'); if (li && c.type === 'todo') {
@@ -1748,6 +1868,7 @@
     if (k === 'n') startPlacing('note');
     if (k === 't') startPlacing('title');
     if (k === 'c') startPlacing('todo');
+    if (k === 'b') startPlacing('table');
     if (k === 'g') startPlacing('coll');
     if (k === 'r') pickWF('box');
     if (k === 'x') pickWF('text');
@@ -1872,7 +1993,9 @@
     if (lastClip && !e.clipboardData.files?.length && (e.clipboardData.getData('text/x-mochiboard') || tx === lastClip.text)) { e.preventDefault(); return pasteCards(); }
     const files = [...(e.clipboardData.files || [])]; const intoTray = $('capture').classList.contains('on');
     if (files.length) { e.preventDefault(); addImages(files, null, intoTray); capture(false); return; }
-    const t = e.clipboardData.getData('text/plain').trim(); if (!t) return; e.preventDefault();
+    const t = e.clipboardData.getData('text/plain').trim(), rows = tableFrom(t, e.clipboardData.getData('text/html'));
+    if (rows) { e.preventDefault(); if (intoTray) capture(false); addTable(rows); return chirp(`Made a table: ${rows.length} rows, ${rows[0].length} columns ✦`, 3000); }
+    if (!t) return; e.preventDefault();
     if (asLink(t) || spotifyOf(t)) linkCard(asLink(t) || t, centerWorld()); else addAtCenter('note', { text: t, color: 'butter' });
   });
   stage.addEventListener('dragover', e => e.preventDefault());
@@ -2086,7 +2209,7 @@
     $('usNote').textContent = (u.week.cost >= .01 ? `About $${u.week.cost.toFixed(2)} this week if you paid per request (on a Pro or Max plan you don't). ` : '') + "Just Mochi's share, counted on this Mac. Your plan's limits cover everything you do with Claude.";
   }
   $('usLimits').onclick = () => MB.openURL('https://claude.ai/settings/usage');
-  $('sendFeedback').onclick = () => MB.openURL('https://mochiboard.app/feedback.html');   // the feedback page on mochiboard.app (with the optional credit-me fields)
+  $('sendFeedback').onclick = () => { closeSettings?.(); openFeedback(); };   // the same note as mochiboard.app/feedback.html, sent from right here
   $('usReset').onclick = async () => { await MB.resetUsage(); showUsage(); };
 
   $('setClose').onclick = closeSettings;
@@ -2245,8 +2368,8 @@
   // what Mochi sees: the cards (trimmed), where they are, what's selected, and what's in Unsorted
   function snapshot() {
     const brief = c => ({ id: c.id, type: c.type, x: Math.round(c.x), y: Math.round(c.y), w: Math.round(c.w), h: Math.round(c.h), color: c.color,
-      text: (c.text || c.title || c.label || '').slice(0, 300), font: c.font, name: c.name, kids: c.kids, desc: c.desc, body: c.body ? c.body.slice(0, 600) : undefined, shape: c.shape, tag: c.tagText, items: c.items ? c.items.map(i => i.t) : undefined, hex: c.hex, url: c.url, selected: sel.has(c.id) || undefined });
-    return { name: board.name, cards: board.cards.map(brief), links: board.links.map(l => [l.a, l.b]), unsorted: board.tray.map(brief), boardColors: board.palette,
+      text: (c.text || c.title || c.label || '').slice(0, 300), font: c.font, name: c.name, kids: c.kids, desc: c.desc, body: c.body ? c.body.slice(0, 600) : undefined, shape: c.shape, tag: c.tagText, items: c.items ? c.items.map(i => i.t) : undefined, rows: c.rows ? c.rows.slice(0, 40).map(r => r.slice(0, 12).map(x => String(x || '').slice(0, 80))) : undefined, header: c.type === 'table' ? c.head !== false : undefined, hex: c.hex, url: c.url, selected: sel.has(c.id) || undefined });
+    return { name: board.name, cards: board.cards.map(brief), links: board.links.map(l => [l.a, l.b]), unsorted: board.tray.map(brief), styles: { colors: board.styles.colors, text: board.styles.text.map(t => t.name) },
       fontsOnThisMac: FONTS.filter(f => !/^(\.|Apple |System|STIX|Noto Sans [A-Z][a-z]+ [A-Z])/.test(f)).slice(0, 400),
       recentChat: (settings.chatKeep === 'off' ? chatLog().slice(-2) : chatLog().slice(-8)).map(m => `${m.who === 'me' ? 'Person' : 'Mochi'}: ${m.text}`),
       mochiStyle: (settings.name ? `The person's name is ${settings.name}; use it now and then, not in every reply. ` : '') + ({ quiet: 'Keep "say" to one short sentence.', normal: 'Keep "say" short and warm.', chatty: 'Be warm, playful and encouraging in "say" (2 to 3 sentences, a little cheer is welcome).' }[settings.chat] || '') + (settings.emoji ? ' A couple of fitting emojis in "say" are welcome.' : ' Never use emojis.'),
@@ -2277,6 +2400,9 @@
     say(`I'd love to help with that! ${what} Download me and I'll connect to your Claude, Mobbin and Higgsfield ✦`, 0, DL);
   }
   async function ask(q, confirmed = false) {
+    const tj = !confirmed && q.match(TELL_JESSA);
+    if (tj) { if (!chatOpen()) mochiOpen(true); addMsg('me', q); const note = tj[1].trim().replace(/^[\s.!?…]+$/, '');
+      return addMsg('mochi', note ? "Want me to send that to Jessa? You'll see exactly what goes out first." : 'What should I tell her? I can open a note for you.', [{ label: note ? 'Review and send ♡' : 'Write a note ♡', run: () => openFeedback(note.charAt(0).toUpperCase() + note.slice(1)) }, { label: 'Not now', ghost: true, run: () => {} }]); }
     if (MB.web) { if (!chatOpen()) mochiOpen(true); addMsg('me', q); return webMochi(q); }
     if (!settings.ai || haveClaude === false) { if (!chatOpen()) mochiOpen(true); addMsg('me', q); }
     if (!settings.ai) return offlineMochi(q, "My thinking is switched off in Settings, so I can only do simple tidying.");
@@ -2291,6 +2417,71 @@
       say("Hmm, I couldn't reach Claude: " + err.message); }
     finally { $('mochi').classList.remove('thinking'); goo.think(false); favGoo?.think(false); typing(false); }
   }
+  // ---------- feedback to Jessa: write it here, see exactly what goes out, then send. No Claude needed ----------
+  const FB_URL = 'https://formspree.io/f/xaqplzgy';   // the same inbox as mochiboard.app/feedback.html
+  let fbKind = 'Idea';
+  const fbOn = () => $('fbSheet').classList.contains('on');
+  function openFeedback(text = '') {
+    $('fbsMsg').value = text || $('fbsMsg').value; fbStep('write'); $('fbsStatus').textContent = '';
+    $('fbSheet').classList.add('on'); $('fbSheet').setAttribute('aria-hidden', 'false'); setTimeout(() => $('fbsMsg').focus(), 60);
+  }
+  function closeFeedback() { $('fbSheet').classList.remove('on'); $('fbSheet').setAttribute('aria-hidden', 'true'); }
+  function fbStep(at) { $('fbsWrite').hidden = at !== 'write'; $('fbsReview').hidden = at !== 'review'; $('fbsBack').hidden = at !== 'review'; $('fbsNext').textContent = at === 'review' ? 'Send to Jessa ♡' : 'Review'; $('fbsNext').disabled = false; $('fbSheet').dataset.at = at; if (at === 'review') setTimeout(() => $('fbsNext').focus(), 30); }
+  async function fbOut() {
+    let v = null; try { v = await MB.version(); } catch (e) {}
+    const o = { kind: fbKind, message: $('fbsMsg').value.trim() }, mail = $('fbsEmail').value.trim(), nm = $('fbsName').value.trim(), role = $('fbsRole').value.trim();
+    if (mail) o.email = mail;
+    if ($('fbsCredit').checked && nm) { o.credit_name = nm; if (role) o.credit_role = role; }
+    o.version = v || Object.keys(NEWS).pop(); o.computer = { mac: 'Mac', windows: 'Windows', linux: 'Linux' }[OS] || 'Web'; o.page = 'Mochiboard app';
+    return o;
+  }
+  const FB_LABEL = { kind: 'Kind', message: 'Note', email: 'Reply to', credit_name: 'Thank me as', credit_role: 'Role', version: 'Version', computer: 'Computer', page: 'Sent from' };
+  $('fbsKinds').onclick = e => { const b = e.target.closest('[data-k]'); if (!b) return; fbKind = b.dataset.k; $('fbsKinds').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); };
+  $('fbsCredit').onchange = () => { $('fbsCreditRow').hidden = !$('fbsCredit').checked; if ($('fbsCredit').checked) $('fbsName').focus(); };
+  $('fbsClose').onclick = closeFeedback;
+  $('fbSheet').onclick = e => { if (e.target === $('fbSheet')) closeFeedback(); };
+  $('fbSheet').addEventListener('keydown', e => e.stopPropagation());
+  // while the sheet is open it owns the keyboard: Esc closes, ⌘Enter goes on, Tab stays inside (WebKit doesn't tab to buttons on its own), and nothing reaches the board
+  addEventListener('keydown', e => {
+    if (!fbOn()) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); return closeFeedback(); }
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); e.stopImmediatePropagation(); return $('fbsNext').click(); }
+    if (e.key === 'Tab') {
+      const f = [...$('fbSheet').querySelectorAll('button, textarea, input')].filter(x => !x.disabled && x.offsetParent && x.type !== 'hidden');
+      const i = f.indexOf(document.activeElement); e.preventDefault(); e.stopImmediatePropagation();
+      return f[(i < 0 ? (e.shiftKey ? f.length - 1 : 0) : i + (e.shiftKey ? -1 : 1) + f.length) % f.length]?.focus();
+    }
+    if (!$('fbSheet').contains(e.target)) e.stopImmediatePropagation();
+  }, true);
+  $('fbsBack').onclick = () => fbStep('write');
+  $('fbsNext').onclick = async () => {
+    const o = await fbOut();
+    if ($('fbSheet').dataset.at === 'write') {
+      if (!o.message) { $('fbsStatus').textContent = 'Write a little note first ✦'; $('fbsMsg').focus(); return; }
+      if (o.email && !/^\S+@\S+\.\S+$/.test(o.email)) { $('fbsStatus').textContent = 'That email looks a little off.'; $('fbsEmail').focus(); return; }
+      if ($('fbsCredit').checked && !o.credit_name) { $('fbsStatus').textContent = 'What name should I thank you by?'; $('fbsName').focus(); return; }
+      $('fbsList').innerHTML = Object.entries(o).filter(([k]) => FB_LABEL[k]).map(([k, v]) => `<dt>${FB_LABEL[k]}</dt><dd>${esc(v)}</dd>`).join('');
+      $('fbsStatus').textContent = ''; return fbStep('review');
+    }
+    if (!navigator.onLine) { $('fbsStatus').textContent = "You're offline. Your note is still here; send it when you're back."; return; }
+    $('fbsNext').disabled = true; $('fbsStatus').textContent = 'Sending…';
+    try {
+      const r = await fetch(FB_URL, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ ...o, _subject: 'Mochiboard feedback ✦' }) });
+      if (!r.ok) throw new Error(r.status);
+      ['fbsMsg', 'fbsEmail', 'fbsName', 'fbsRole'].forEach(id => $(id).value = ''); $('fbsCredit').checked = false; $('fbsCreditRow').hidden = true;
+      $('fbsStatus').textContent = 'Sent ✦ Thank you!'; setTimeout(closeFeedback, 1200);
+      say(o.kind === 'Love note' ? 'Sent! Jessa is going to love that ♡' : 'Sent to Jessa ✦ She reads every one.');
+    } catch (err) { $('fbsNext').disabled = false; $('fbsStatus').innerHTML = `That didn't go through. Try again, or <a href="#" id="fbsWeb">use the feedback page</a>.`; $('fbsWeb').onclick = ev => { ev.preventDefault(); MB.openURL('https://mochiboard.app/feedback.html'); }; }
+  };
+  $('mcFb').onclick = () => openFeedback();
+  // right-click Mochi: her little menu
+  $('mPill').oncontextmenu = e => { e.preventDefault(); $('rowMenu')?.remove();
+    const m = document.createElement('div'); m.id = 'rowMenu'; m.className = 'row-menu'; m.innerHTML = '<button data-m="fb">Send feedback to Jessa ♡</button><button data-m="chat">Open chat</button>'; document.body.appendChild(m);
+    const r = m.getBoundingClientRect(); m.style.left = Math.min(e.clientX, innerWidth - r.width - 10) + 'px'; m.style.top = Math.max(10, e.clientY - r.height - 8) + 'px';
+    m.onclick = ev => { const a = ev.target.closest('[data-m]')?.dataset.m; if (!a) return; m.remove(); if (a === 'fb') openFeedback(); else mochiOpen(true); };
+    setTimeout(() => addEventListener('pointerdown', function off(ev) { if (!m.contains(ev.target)) { m.remove(); removeEventListener('pointerdown', off, true); } }, true)); };
+  // "tell Jessa …" in the chat: Mochi offers to send it (rules first, so it works without Claude too)
+  const TELL_JESSA = /^\s*(?:please\s+|can you\s+|could you\s+)?(?:tell|send|message|let)\s+jessa(?!['’]s)(?:\s+know)?\b[\s:,-]*(?:that\s+)?([\s\S]*)$/i;
   $('mForm').onsubmit = e => { e.preventDefault(); const q = $('mInput').value.trim(); if (!q) return; $('mInput').value = ''; mochiOpen(false); $('mInput').placeholder = 'Ask Mochi… “group these by theme”'; ask(q); };
   const parse = raw => { const s = String(raw), a = s.indexOf('{'), b = s.lastIndexOf('}'); if (a < 0) return { say: s.trim() }; try { return JSON.parse(s.slice(a, b + 1)); } catch (e) { return { say: s.trim() }; } };
   // her actions: say, add cards, move cards, place unsorted ideas, add titles, connect cards
@@ -2403,7 +2594,7 @@
 
   // ---------- placing: pick a tool, the new thing rides on your cursor, click to drop it, then type ----------
   let placing = null, mouse = { x: 0, y: 0 };
-  const PLACE = { kit: ['', [300, 180]], note: ['Note', [220, 120]], todo: ['Checklist', [240, 170]], title: ['Title', [300, 56]], coll: ['Collection', [288, 200]], swatch: ['Color', [120, 150]], doc: ['Doc', [240, 52]], canvas: ['Canvas', [260, 180]], link: ['Paste a link', [260, 52]], shape: ['', [160, 160]], stamp: ['', [56, 56]], audio: ['Voice memo', [290, 150]], piece: ['', [300, 60]], icon: ['', [28, 28]], frame: ['Screen', [393, 852]], text: ['Text', [220, 26]], box: ['Drag to draw a box', [160, 100]] , video: ['Video', [360, 246]] };
+  const PLACE = { kit: ['', [300, 180]], table: ['Table', [360, 130]], note: ['Note', [220, 120]], todo: ['Checklist', [240, 170]], title: ['Title', [300, 56]], coll: ['Collection', [288, 200]], swatch: ['Color', [120, 150]], doc: ['Doc', [240, 52]], canvas: ['Canvas', [260, 180]], link: ['Paste a link', [260, 52]], shape: ['', [160, 160]], stamp: ['', [56, 56]], audio: ['Voice memo', [290, 150]], piece: ['', [300, 60]], icon: ['', [28, 28]], frame: ['Screen', [393, 852]], text: ['Text', [220, 26]], box: ['Drag to draw a box', [160, 100]] , video: ['Video', [360, 246]] };
   function startPlacing(type, extra = {}) {
     if (placing?.type === type && placing.extra?.shape === extra.shape && placing.extra?.piece === extra.piece) return stopPlacing();
     stopPlacing(); placing = { type, extra }; selectOnly([]);
@@ -2426,7 +2617,7 @@
     const type = placing.type, more = placing.extra || {}; stopPlacing();
     const dev = DEVICES[more.device], extra = type === 'icon' ? { name: more.name || 'star', color: '#27272a', w: 28, h: 28, r: 0 } : type === 'frame' ? { name: more.device === 'Desktop' ? 'Desktop' : 'Screen', device: more.device || 'Custom', w: dev ? dev[0] : 393, h: dev ? dev[1] : 852, radius: dev ? dev[2] : 0, fill: '#ffffff', r: 0 }
       : type === 'text' ? { text: '', size: 18, weight: 500, font: 'DM Sans', color: '#27272a', r: 0 } : type === 'audio' ? { r: 0 } : type === 'doc' ? { text: '', body: '' } : type === 'canvas' ? { text: '' } : type === 'link' ? { url: '' } : type === 'shape' ? { shape: more.shape, fill: 'gray', text: '', r: 0 } : type === 'note' ? { name: '', color: newNoteColor() } : type === 'todo' ? { text: '', items: [{ t: 'first thing', done: false }] } : type === 'title' ? { text: '' }
-      : type === 'coll' ? { text: '', color: 'pink', kids: [], cols: 1 } : type === 'swatch' ? { hex: '#ff9ec4', label: 'Pink' } : {};
+      : type === 'coll' ? { text: '', color: 'pink', kids: [], cols: 1 } : type === 'table' ? { rows: [['', '', ''], ['', '', ''], ['', '', '']], r: 0 } : type === 'swatch' ? { hex: '#ff9ec4', label: 'Pink' } : {};
     const c = card(type, extra); c.x = snapTo(w.x - 14 / view.z); c.y = snapTo(w.y - 14 / view.z);
     if (type === 'coll') c.r = 0;
     if (type === 'link') c.h = 52;
@@ -2440,7 +2631,8 @@
     if (type === 'note' && board.cards.filter(x => x.type === 'note' && !parentOf(x.id)).length === 6) tip('That\'s a lot of loose notes! Want me to sort them into collections? Just ask ✦');
     const t = type !== 'coll' && collAt(w, new Set([c.id])); if (t) { dropInto(t, [c.id], w); save(); }
     if (WF.includes(type)) { fileIntoFrame([c]); pickWF(null); }
-    if (['note', 'todo', 'title', 'doc', 'canvas', 'text'].includes(type)) startEdit(c.id);   // ready to type right away, so the first letters never act as shortcuts
+    if (type === 'table') fitText(c);
+    if (['note', 'todo', 'title', 'doc', 'canvas', 'text', 'table'].includes(type)) startEdit(c.id);   // ready to type right away, so the first letters never act as shortcuts
     if (type === 'coll') startEdit(c.id);
     if (type === 'swatch') setTimeout(() => openColor(c), 60);
     if (type === 'audio') { c.ready = true; renderCard(c); selectOnly([c.id]); save(); readyToRecord().then(() => renderCard(c)); }
@@ -2592,7 +2784,9 @@
         ...(cs.length === 1 && cs[0].type === 'section' ? [{ label: 'Rename section', run: () => renameSection(cs[0]) }] : []),
         ...(cs.some(c => c.type === 'section') ? [{ label: 'Remove section', run: () => removeSection(cs.filter(c => c.type === 'section')) }] : []),
         ...(cs.some(c => TILTS(c) && Math.round(c.type === 'stamp' && !c.tilted ? 0 : c.r || 0)) ? [{ label: cs.length > 1 ? 'Reset tilts' : 'Reset tilt', run: () => { remember(); cs.filter(TILTS).forEach(c => { c.r = 0; c.tilted = true; renderCard(c); }); selectOnly(cs.map(c => c.id)); $('selbar').dataset.key = ''; save(); } }] : []),
-        ...maskMenuItems(cs),
+        ...maskMenuItems(cs), ...tableMenu(cs, e),
+        ...(cs.some(c => SIZED.includes(c.type)) ? [{ label: 'Save text style', run: () => saveTextStyle(cs.find(c => SIZED.includes(c.type))) },
+          ...(board.styles.text.length ? [{ label: 'Text style', sub: board.styles.text.map(st => ({ label: esc(st.name), run: () => applyTextStyle(st, cs) })) }] : [])] : []),
         { label: 'Arrange', sub: arrangeSub() }, '-',
         { label: 'Export as image', run: () => exportCards(cs, cardName(cs), false) },
         { label: 'Export as PDF', run: () => exportCards(cs, cardName(cs), true) },
@@ -3423,7 +3617,7 @@
     const pick = c => RECIPE_TYPES.includes(c.type) && !c.hidden, sel = selCards().filter(pick), all = board.cards.filter(c => pick(c) && !parentOf(c.id));
     return (sel.length >= 2 ? sel : all).slice().sort((a, b) => (Math.abs(a.y - b.y) > 40 ? a.y - b.y : a.x - b.x));
   }
-  const wordsOf = c => ((c.text || c.name || '').trim().split('\n')[0] || (c.items && c.items[0]?.t) || 'Untitled').slice(0, 60);
+  const wordsOf = c => ((c.text || c.name || '').trim().split('\n')[0] || (c.items && c.items[0]?.t) || (c.rows && c.rows.flat().find(v => (v || '').trim())) || 'Untitled').slice(0, 60);
   const besideAll = () => { const cs = board.cards.filter(c => !c.hidden); return cs.length ? { x: Math.max(...cs.map(c => c.x + c.w)) + 200, y: Math.min(...cs.map(c => c.y)) } : centerWorld(); };
   function removeCards(cs) { remember(); const ids = new Set(cs.map(c => c.id)); board.cards = board.cards.filter(c => !ids.has(c.id)); board.links = board.links.filter(l => !ids.has(l.a) && !ids.has(l.b)); ids.forEach(id => cardsEl.querySelector(`[data-id="${id}"]`)?.remove()); selectOnly([]); renderWires(); layersSoon(); save(); }
   const RECIPES = {
@@ -4695,10 +4889,10 @@
       element: $('dvBody'),
       extensions: [...MBEditor.extensions('Start writing, or drag cards here from the board…'),
         MBEditor.BubbleMenu.configure({ element: bubbleEl, tippyOptions: { duration: [140, 90], placement: 'top', offset: [0, 10], maxWidth: 'none', zIndex: 60, appendTo: () => document.body, popperOptions: { strategy: 'fixed' } },
-          shouldShow: ({ editor, state }) => !state.selection.empty && editor.isEditable && !editor.isActive('image') && !document.querySelector('#dvPop:not([hidden])') })],
+          shouldShow: ({ editor, state }) => !hlPen && !state.selection.empty && editor.isEditable && !editor.isActive('image') && !document.querySelector('#dvPop:not([hidden])') })],
       editorProps: {
         attributes: { class: 'dv-prose', spellcheck: 'true' },
-        handleKeyDown: (v, e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); showPop('link', $('dvTools').querySelector('[data-pop="link"]')); return true; } return false; },
+        handleKeyDown: (v, e) => { if (hlPen && e.key === 'Escape') { hlPenOff(); return true; } if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); showPop('link', $('dvTools').querySelector('[data-pop="link"]')); return true; } return false; },
         // images dropped or pasted in become part of the doc (kept inside the doc, so they never go missing)
         handleDrop: (v, e) => { const fs = [...(e.dataTransfer?.files || [])].filter(f => f.type.startsWith('image/')); if (!fs.length) return false; e.preventDefault(); const pos = v.posAtCoords({ left: e.clientX, top: e.clientY })?.pos; fs.forEach(f => addDocImage(f, pos)); return true; },
         handlePaste: (v, e) => { const fs = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith('image/')); if (!fs.length) return false; fs.forEach(f => addDocImage(f)); return true; },
@@ -4706,8 +4900,24 @@
       onUpdate: () => { if (!docCard) return; clearTimeout(dvT); $('dvSaved').textContent = 'saving…'; dvT = setTimeout(syncDoc, 350); paintCount(); },
       onSelectionUpdate: () => paintTools(), onTransaction: () => requestAnimationFrame(paintTools),
     });
-    buildTools(); return ed;
+    buildTools();
+    // highlighter mode: let go of a drag and the words you swept over get highlighted (or un-highlighted, if they already were)
+    ed.view.dom.addEventListener('pointerup', () => setTimeout(() => {
+      if (!hlPen || !ed) return; const { from, to, empty } = ed.state.selection; if (empty) return;
+      const c = ed.chain().focus(); (ed.isActive('highlight', { color: hlPen }) ? c.unsetHighlight() : c.setHighlight({ color: hlPen })).setTextSelection(to).run();
+    }, 0));
+    return ed;
   }
+  let hlPen = null;   // the highlighter's color while you're holding it
+  const penCursor = col => `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 26 26'><g transform='rotate(40 13 13)'><rect x='9' y='3' width='8' height='14' rx='2' fill='${col}' stroke='#494848' stroke-width='1.4'/><path d='M9.5 17h7l-1.5 5h-4z' fill='#fff' stroke='#494848' stroke-width='1.4' stroke-linejoin='round'/><rect x='11.5' y='22' width='3' height='2' fill='${col}' stroke='#494848' stroke-width='1'/></g></svg>`)}") 4 22, text`;
+  function hlPenOn(col) {
+    hlPen = col; $('docview').classList.add('hl-pen'); $('dvBody').style.setProperty('--pen', penCursor(col));
+    let chip = $('hlChip'); if (!chip) { chip = document.createElement('div'); chip.id = 'hlChip'; chip.className = 'hl-chip'; $('docview').appendChild(chip); chip.onclick = e => { if (e.target.closest('button')) hlPenOff(); }; }
+    chip.innerHTML = `<i style="background:${col}"></i>Highlighter on · drag over words <button type="button">Put it down · Esc</button>`;
+    document.querySelectorAll('.dt-hl').forEach(b => b.classList.add('on')); ed?.commands.setTextSelection(ed.state.selection.to);
+  }
+  function hlPenOff() { hlPen = null; $('docview').classList.remove('hl-pen'); $('dvBody').style.removeProperty('--pen'); $('hlChip')?.remove(); document.querySelectorAll('.dt-hl').forEach(b => b.classList.remove('on')); }
+  addEventListener('keydown', e => { if (hlPen && e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); hlPenOff(); if (!$('dvPop').hidden) hidePop(); } }, true);
   function syncDoc() {
     clearTimeout(dvT); if (!docCard || !ed) return;
     docCard.doc = ed.getJSON(); docCard.body = ed.getText({ blockSeparator: '\n' }).replace(/\n{3,}/g, '\n\n').trim();
@@ -4731,7 +4941,7 @@
     $('dvPage').scrollTop = 0;
     setTimeout(() => c.text ? e?.commands.focus('end') : $('dvTitle').focus(), 250);
   }
-  function closeDoc() { if (!docCard) return; syncDoc(); hidePop(); const c = docCard; docCard = null; $('docview').classList.remove('on', 'wide'); stage.classList.remove('doc-open'); document.activeElement.blur(); renderCard(c); selectOnly([c.id]); save(); }
+  function closeDoc() { if (!docCard) return; hlPenOff(); syncDoc(); hidePop(); const c = docCard; docCard = null; $('docview').classList.remove('on', 'wide'); stage.classList.remove('doc-open'); document.activeElement.blur(); renderCard(c); selectOnly([c.id]); save(); }
   $('dvTitle').oninput = () => { if (!docCard) return; docCard.text = $('dvTitle').value; $('dvWhere').textContent = `${board.name} › ${docCard.text || 'Untitled'}`; renderCard(docCard); save(); };
   $('dvTitle').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); ed?.commands.focus('start'); } };
   $('dvBack').onclick = closeDoc; $('dvClose').onclick = closeDoc;
@@ -4895,7 +5105,7 @@ ${proseCSS()}
     if (popKind === kind && !$('dvPop').hidden) return hidePop();
     hidePop(); popKind = kind; btn.classList.add('open'); const p = $('dvPop'); p.className = 'dv-pop pop-' + kind;
     const swatches = (list, cur, attr) => list.map(h => `<button type="button" class="dp-sw ${cur && cur.toLowerCase() === h.toLowerCase() ? 'on' : ''}" ${attr}="${h}" style="--sw:${h}" title="${h.toUpperCase()}" aria-label="${h.toUpperCase()}"></button>`).join('');
-    const boardCols = [...new Set((board.palette || []).map(x => x.hex).concat(board.cards.filter(c => c.type === 'swatch').map(c => c.hex)))].slice(0, 14);
+    const boardCols = [...new Set(board.styles.colors.map(x => x.hex).concat(board.cards.filter(c => c.type === 'swatch').map(c => c.hex)))].slice(0, 14);
     if (kind === 'style') {
       const k = blockOf(); p.innerHTML = BLOCKS.map(([id, name]) => `<button type="button" class="dp-row dp-st st-${id} ${id === k ? 'on' : ''}" data-block="${id}">${name}</button>`).join('');
     } else if (kind === 'font') {
@@ -4911,7 +5121,7 @@ ${proseCSS()}
       setTimeout(() => q.focus(), 30);
     } else if (kind === 'color' || kind === 'hl') {
       const isHl = kind === 'hl', cur = isHl ? ed.getAttributes('highlight').color : ed.getAttributes('textStyle').color;
-      p.innerHTML = `<button type="button" class="dp-row dp-none" data-${isHl ? 'hl' : 'tc'}="">${isHl ? 'No highlight' : 'Default color'}</button>
+      p.innerHTML = `${isHl ? `<button type="button" class="dp-row dp-pen${hlPen ? ' on' : ''}" data-hlpen="1">${hlPen ? 'Put the highlighter down' : 'Highlighter mode'}<small>${hlPen ? 'Esc' : 'pick it up, drag over words'}</small></button>` : ''}<button type="button" class="dp-row dp-none" data-${isHl ? 'hl' : 'tc'}="">${isHl ? 'No highlight' : 'Default color'}</button>
         ${boardCols.length ? `<div class="dp-h">Board colors</div><div class="dp-grid">${swatches(boardCols, cur, isHl ? 'data-hl' : 'data-tc')}</div>` : ''}
         <div class="dp-h">${isHl ? 'Highlighters' : 'Colors'}</div><div class="dp-grid">${swatches(isHl ? HIGHLIGHTS : TEXT_COLORS, cur, isHl ? 'data-hl' : 'data-tc')}</div>
         <button type="button" class="dp-row dp-any" data-any="${kind}">Any color…</button>`;
@@ -4971,6 +5181,8 @@ ${proseCSS()}
     if (d.block) { setBlock(d.block); return hidePop(); }
     if (d.font != null) { useFont(d.font); (d.font === DOC_FONT ? c.unsetFontFamily() : c.setFontFamily(`"${d.font}"`)).run(); return hidePop(); }
     if (d.tc != null) { (d.tc ? c.setColor(d.tc) : c.unsetColor()).run(); return hidePop(); }
+    if (d.hlpen) { hidePop(); return hlPen ? hlPenOff() : hlPenOn(ed.getAttributes('highlight').color || HIGHLIGHTS[0]); }
+    if (d.hl != null && hlPen && d.hl) { hlPenOn(d.hl); return hidePop(); }   // holding the highlighter: a swatch swaps its ink
     if (d.hl != null) { (d.hl ? c.setHighlight({ color: d.hl }) : c.unsetHighlight()).run(); return hidePop(); }
     if (d.any) { const isHl = d.any === 'hl', r = b.getBoundingClientRect(), sel = { from: ed.state.selection.from, to: ed.state.selection.to }; hidePop();
       openColor({ tint: true, boardColors: true, title: isHl ? 'Highlight' : 'Text color', hex: (isHl ? ed.getAttributes('highlight').color : ed.getAttributes('textStyle').color) || (isHl ? '#fff1a8' : '#e2649a'), presets: isHl ? HIGHLIGHTS : TEXT_COLORS, at: { x: r.left, y: r.bottom + 8 },
@@ -5013,7 +5225,7 @@ ${proseCSS()}
   }
 
   // ---------- dropping cards into a doc: they arrive as real content (a checklist stays a checklist) ----------
-  const WORDY = ['note', 'todo', 'title', 'link', 'swatch', 'doc', 'shape', 'audio', 'spotify'];
+  const WORDY = ['note', 'todo', 'title', 'link', 'swatch', 'doc', 'shape', 'audio', 'spotify', 'table'];
   function cardWords(c) {
     if (c.type === 'note') return [c.name, c.text].filter(x => (x || '').trim()).join('\n');
     if (c.type === 'todo') return [(c.text || '').trim(), ...(c.items || []).map(i => (i.done ? '☑ ' : '☐ ') + i.t)].filter(Boolean).join('\n');
@@ -5022,6 +5234,7 @@ ${proseCSS()}
     if (c.type === 'audio') return [c.title, c.text].filter(Boolean).join('\n');
     if (c.type === 'spotify') return [c.title, c.desc].filter(Boolean).join(' · ');
     if (c.type === 'doc') return [c.text, c.body].filter(x => (x || '').trim()).join('\n');
+    if (c.type === 'table') return (c.rows || []).map(r => r.join('\t')).join('\n');
     return c.text || '';
   }
   function cardHTML(c) {
@@ -5031,6 +5244,7 @@ ${proseCSS()}
     if (c.type === 'swatch') return `<p><span style="color: ${c.hex}">■</span> ${escH(c.label || '')} <code>${c.hex.toUpperCase()}</code></p>`;
     if (c.type === 'title') return `<h2>${escH(c.text)}</h2>`;
     if (c.type === 'doc') return (c.text ? `<h2>${escH(c.text)}</h2>` : '') + docHTML(c);
+    if (c.type === 'table') return `<table><tbody>${(c.rows || []).map((r, i) => `<tr>${r.map(v => i === 0 && c.head !== false ? `<th><p>${escH(v)}</p></th>` : `<td><p>${escH(v)}</p></td>`).join('')}</tr>`).join('')}</tbody></table>`;
     return mdToHTML(cardWords(c));
   }
   // the open doc page, or a doc card on the board, under the pointer (only for cards that have words)
@@ -5074,7 +5288,7 @@ ${proseCSS()}
   const ALIGN_IC = {"left": "<path d=\"M15 12H3\" /><path d=\"M17 18H3\" /><path d=\"M21 6H3\" />", "center": "<path d=\"M17 12H7\" /><path d=\"M19 18H5\" /><path d=\"M21 6H3\" />", "right": "<path d=\"M21 12H9\" /><path d=\"M21 18H7\" /><path d=\"M21 6H3\" />"};
   // each card's normal text size in px, so a size can be shown and typed as real pixels
   let fsMark = false, skMark = false, spMark = false, sqMark = false;   // one undo step per visit to the size / stroke dropdown
-  const FS_BASE = { note: 15, title: 44, todo: 22, shape: 15, coll: 15 };
+  const FS_BASE = { note: 15, title: 44, todo: 14, shape: 15, coll: 15, table: 14 };
   const fsMul = c => typeof c.fs === 'number' ? c.fs : FS[c.fs] || 1, fsPx = c => Math.round((FS_BASE[c.type] || 15) * fsMul(c));
   function fitNote(c) { if (c.type !== 'note' || parentOf(c.id)) return; renderCard(c); const el = cardsEl.querySelector(`[data-id="${c.id}"]`), b2 = el.querySelector('.body'); b2.style.height = 'auto'; c.h = Math.max(80, b2.offsetHeight); b2.style.height = ''; renderCard(c); }
   function setFsPx(px) { px = Math.max(6, Math.min(400, Math.round(+px || 0))); if (!px) return;
@@ -5094,7 +5308,7 @@ ${proseCSS()}
       renderCard(c); fitText(c); if (c.type === 'title') { const el = cardsEl.querySelector(`[data-id="${c.id}"]`); if (el) c.h = el.offsetHeight; } });
     renderWires(); save();
   }
-  const FS = { s: .8, m: 1, l: 1.4, xl: 2 }, SIZED = ['note', 'todo', 'title', 'shape', 'coll'];
+  const FS = { s: .8, m: 1, l: 1.4, xl: 2 }, SIZED = ['note', 'todo', 'title', 'shape', 'coll', 'table'];
   function selCards() { return [...sel].map(byId).filter(Boolean); }
   const I = d => `<svg viewBox="0 0 ${d.includes('data-l24') ? 24 : 20} ${d.includes('data-l24') ? 24 : 20}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
   const ICON = {
@@ -5188,7 +5402,7 @@ ${proseCSS()}
     const CARET = '<svg class="sb-caret" viewBox="0 0 12 12"><path d="M3 4.5l3 3 3-3"/></svg>';
     const colorPop = (cur, dots) => pop('color', `<i class="sb-cur" style="background:${cur}"></i>${CARET}`, `<div class="sb-dots">${dots}</div>`, 'Color');
     let more = '';
-    let h = `<span class="sb-label">${one ? ({ section: 'Section', note: 'Note', todo: 'Checklist', title: 'Title', image: 'Image', link: 'Link', swatch: 'Color', coll: 'Collection', doc: 'Doc', canvas: 'Canvas', shape: 'Shape', path: 'Pen shape', stamp: 'Stamp', audio: 'Voice memo', video: 'Video', spotify: 'Spotify', ink: 'Drawing', frame: 'Screen', box: 'Box', text: 'Text', font: 'Font' }[one.type] || 'Card') : cs.length + ' selected'}</span>`;
+    let h = `<span class="sb-label">${one ? ({ section: 'Section', note: 'Note', todo: 'Checklist', table: 'Table', title: 'Title', image: 'Image', link: 'Link', swatch: 'Color', coll: 'Collection', doc: 'Doc', canvas: 'Canvas', shape: 'Shape', path: 'Pen shape', stamp: 'Stamp', audio: 'Voice memo', video: 'Video', spotify: 'Spotify', ink: 'Drawing', frame: 'Screen', box: 'Box', text: 'Text', font: 'Font' }[one.type] || 'Card') : cs.length + ' selected'}</span>`;
     if (cs.length > 1) { const A = [['left', 'Align left edges'], ['hcenter', 'Align centers'], ['right', 'Align right edges'], ['top', 'Align tops'], ['vcenter', 'Align middles'], ['bottom', 'Align bottoms']];
       if (cs.length > 2) A.push(['dh', 'Space evenly across'], ['dv', 'Space evenly down']);
       h += G(0, `<div class="sb-sizes sb-style sb-arrange">${A.map(([k, t], i) => (i === 3 || i === 6 ? '<i class="sb-gap"></i>' : '') + `<button data-arr="${k}" title="${t}"><svg viewBox="0 0 24 24">${ARRANGE_IC[k]}</svg></button>`).join('')}</div>`); }
@@ -5245,7 +5459,7 @@ ${proseCSS()}
         `<div class="sb-dots sb-fills"><button data-tf="none" title="No fill" class="sb-nofill ${cur === 'none' ? 'on' : ''}"></button>${TF.map(v => `<button data-tf="${v}" title="${v}" style="background:${v}" class="${cur.toLowerCase() === v ? 'on' : ''}"></button>`).join('')}<button class="sb-anycolor" data-tfwheel="1" title="Any color"></button></div>`, 'Text color')); }
     const stk = cs.filter(c => canStroke(c));
     if (stk.length === cs.length && stk.length) { const f = stk[0], col = f.stroke || (f.type === 'image' ? '#ffffff' : '#27272a'), w = f.type === 'image' ? bwOf(f) : (f.sw || 0), textOnly = stk.every(c => STROKE_TEXT.includes(c.type)), max = textOnly ? 12 : 24, noDash = stk.some(c => ['icon', 'title', 'text', 'image'].includes(c.type));   // dashed/dotted is for shapes, boxes and screens
-      const SK = ['#000000', '#ffffff', '#71717a', '#a1a1aa', '#ff5a6e', '#ff9ec4', '#f7b955', '#5fc795', '#4f9dff', '#9b7bff', ...(board.palette || []).map(p => p.hex), ...board.cards.filter(c => c.type === 'swatch' && c.hex).map(c => c.hex)].slice(0, 18);
+      const SK = ['#000000', '#ffffff', '#71717a', '#a1a1aa', '#ff5a6e', '#ff9ec4', '#f7b955', '#5fc795', '#4f9dff', '#9b7bff', ...board.styles.colors.map(p => p.hex), ...board.cards.filter(c => c.type === 'swatch' && c.hex).map(c => c.hex)].slice(0, 18);
       h += G(2, pop('stroke', `<i class="sb-cur sb-skcur${w ? '' : ' none'}" style="--c:${col}"></i>${CARET}`,
         `<div class="sb-corners sb-stroke">${f.type === 'image' ? '<small class="sb-cap">The picture’s border. 0 is none; on a cut-out it’s an outline.</small>' : ''}<div class="sbc-top"><span>Stroke</span><input type="range" min="0" max="${max}" step="0.5" value="${w}" style="--p:${Math.min(100, w / max * 100)}%" data-skw><input type="number" min="0" max="${max}" step="0.5" value="${w}" data-skn aria-label="Stroke width"><b class="sb-unit">px</b></div>
           <div class="sb-dots sb-fills">${[...new Set(SK.map(v => v.toLowerCase()))].map(v => `<button data-skc="${v}" title="${v}" style="background:${v}" class="${w && col.toLowerCase() === v ? 'on' : ''}"></button>`).join('')}<button class="sb-anycolor" data-skwheel="1" title="Any color"></button></div>
@@ -5552,7 +5766,7 @@ ${proseCSS()}
   function boardColorRows(starter) {
     const norm = v => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : COLORS[v] || null, seen = new Set(['#000000', '#ffffff']);
     const take = list => list.filter(x => x.hex && !seen.has(x.hex) && seen.add(x.hex));
-    const saved = take((board.palette || []).map(p => ({ hex: p.hex.toLowerCase(), name: p.name })));
+    const saved = take(board.styles.colors.map(p => ({ hex: p.hex.toLowerCase(), name: p.name })));
     const cards = take(board.cards.filter(c => c.type === 'swatch' && c.hex).map(c => ({ hex: c.hex.toLowerCase(), name: c.label || c.hex.toUpperCase() })));
     const count = new Map(); board.cards.forEach(c => c.type !== 'swatch' && ['color', 'fill', 'stroke'].forEach(k => { const h = norm(c[k]); if (h) count.set(h, (count.get(h) || 0) + 1); }));
     const used = take([...count].sort((a, b) => b[1] - a[1]).map(([h]) => ({ hex: h, name: h.toUpperCase() })));
@@ -5576,8 +5790,8 @@ ${proseCSS()}
     }
     colorCard = c; hsv = hex2hsv(c.hex); drawIfV();
     $('cpHex').value = c.hex.toUpperCase(); $('cpName').value = c.label || ''; $('cpDot').style.background = c.hex;
-    $('cpQuick').innerHTML = board.palette.map(p => `<button style="background:${p.hex}" data-hex="${p.hex}" title="${esc(p.name)}"></button>`).join('');
-    $('cpSave').textContent = board.palette.some(p => p.hex === c.hex) ? 'Update board color' : 'Save to board colors'; $('cpSave').classList.remove('saved-ok');
+    $('cpQuick').innerHTML = board.styles.colors.map(p => `<button style="background:${p.hex}" data-hex="${p.hex}" title="${esc(p.name)}"></button>`).join('');
+    $('cpSave').textContent = board.styles.colors.some(p => p.hex === c.hex) ? 'Update board color' : 'Save to board colors'; $('cpSave').classList.remove('saved-ok');
     placeColorPop(c); $('cpop').classList.add('on');
   }
   function closeColor() { $('cpop').classList.remove('on'); colorCard = null; }
@@ -5586,7 +5800,7 @@ ${proseCSS()}
     if (!colorCard || !hex) return; colorCard.hex = hex; $('cpDot').style.background = hex;
     if (from !== 'hex') $('cpHex').value = hex.toUpperCase();
     if (from !== 'wheel') { hsv = hex2hsv(hex); drawIfV(); }
-    const named = board.palette.find(p => p.hex === hex); if (named && from !== 'name') { colorCard.label = named.name; $('cpName').value = named.name; }
+    const named = board.styles.colors.find(p => p.hex === hex); if (named && from !== 'name') { colorCard.label = named.name; $('cpName').value = named.name; }
     else if (colorCard.autoName !== false && from !== 'name') { colorCard.label = colorName(hex); colorCard.autoName = true; $('cpName').value = colorCard.label; }
     $('cpSave').textContent = named ? 'Update board color' : 'Save to board colors'; $('cpSave').classList.remove('saved-ok');
     renderCard(colorCard); selectOnly([colorCard.id]); if (from !== 'wheel') save();
@@ -5597,8 +5811,8 @@ ${proseCSS()}
     const b = e.target.closest('[data-hex]'); if (b) setColor(b.dataset.hex, 'quick'); };
   const keepCpopOnScreen = () => { const p = $('cpop'), r = p.getBoundingClientRect(); if (r.bottom > innerHeight - 12) p.style.top = Math.max(12, innerHeight - r.height - 12) + 'px'; };
   $('cpSave').onclick = () => {
-    if (!colorCard) return; const name = (colorCard.label || '').trim() || colorCard.hex.toUpperCase(), hit = board.palette.find(p => p.hex === colorCard.hex);
-    if (hit) hit.name = name; else board.palette.push({ hex: colorCard.hex, name });
+    if (!colorCard) return; const name = (colorCard.label || '').trim() || colorCard.hex.toUpperCase(), hit = board.styles.colors.find(p => p.hex === colorCard.hex);
+    if (hit) hit.name = name; else board.styles.colors.push({ hex: colorCard.hex, name });
     colorCard.label = name; renderCard(colorCard); selectOnly([colorCard.id]); renderPalette(); save(); openColor(colorCard);
     $('cpSave').textContent = 'Saved ✓'; $('cpSave').classList.add('saved-ok'); chirp(`Saved “${name}” to this board's colors ✦`, 3500);
   };
@@ -5616,10 +5830,59 @@ ${proseCSS()}
       apply: set, reset: () => { if (key === 'cursor') settings.cursor = '#ff9ec4'; else if (forBoard) { delete board.bg; save(); } else delete myColors()[key]; applySettings(); } });
   }
   document.addEventListener('click', e => { const b = e.target.closest('[data-col]'); if (!b) return; const r = b.getBoundingClientRect(); tintPicker(b.dataset.col, { x: r.left - 270, y: r.top - 120 }); });
+  // ---------- text styles: like Board colors, for type. Save how a note's or title's words look, then put it on other text with one click ----------
+  const TS_KEYS = ['font', 'fs', 'bold', 'italic', 'under', 'strike', 'align', 'lh', 'ls', 'tcase', 'tc', 'stroke', 'sw', 'sdash'];
+  const TS_TITLE = ['tc', 'stroke', 'sw', 'sdash'];   // a title's text color and outline (on a note these are the card's fill and border, so they only pass title to title)
+  // sizes travel as real pixels (a 44 px heading stays 44 px on a note), and bold as on/off (titles are bold unless you said otherwise)
+  const tsOf = c => { const s = {}; TS_KEYS.forEach(k => { if (k !== 'fs' && c[k] != null && (!TS_TITLE.includes(k) || c.type === 'title')) s[k] = c[k]; });
+    s.px = fsPx(c); s.bold = c.bold ?? ['title', 'coll'].includes(c.type); return { type: c.type, s }; };
+  const tsPx = st => st.s.px || fsPx({ type: st.type, fs: st.s.fs });   // (fs: styles saved before sizes were pixels)
+  const tsLabel = st => [st.s.font || 'Default font', tsPx(st) + ' px', st.s.tcase === 'upper' ? 'CAPS' : ''].filter(Boolean).join(' · ');
+  function applyTextStyle(st, cs) {
+    const list = cs.filter(c => SIZED.includes(c.type)); if (!list.length) return false; remember();
+    list.forEach(c => { TS_KEYS.forEach(k => { if (k === 'fs' || TS_TITLE.includes(k) && !(c.type === 'title' && st.type === 'title')) return; if (k in st.s) c[k] = st.s[k]; else delete c[k]; });
+      const m = +(tsPx(st) / (FS_BASE[c.type] || 15)).toFixed(4), hit = Object.keys(FS).find(z => Math.abs(FS[z] - m) < .02); if (hit === 'm') delete c.fs; else c.fs = hit || m;
+      if (st.s.font) useFont?.(st.s.font); renderCard(c); fitText(c); fitNote(c); });
+    $('selbar').dataset.key = ''; selectOnly(list.map(c => c.id)); save(); return true;
+  }
+  function saveTextStyle(c) {
+    if (!c || !SIZED.includes(c.type)) return chirp('Select a note or title first, then save its text style ✦', 3000);
+    const base = { title: 'Heading', note: 'Note text', todo: 'List text', shape: 'Label', coll: 'Group name' }[c.type] || 'Text';
+    let name = base, k = 2; while (board.styles.text.some(t => t.name === name)) name = base + ' ' + k++;
+    board.styles.text.push({ name, ...tsOf(c) }); renderTextStyles(); save(); chirp(`Saved “${name}” to Text styles ✦ Click it to use it on other text`, 3500);
+    setTimeout(() => $('tstyles').querySelector('.tsr:last-of-type span')?.dispatchEvent(new MouseEvent('dblclick')), 50);
+  }
+  function renderTextStyles() {
+    const el = $('tstyles'); if (!el || !board) return; const list = board.styles.text;
+    el.innerHTML = `<div class="ts-h">Text styles</div>` + (list.length ? '' : '<div class="palette-empty">Style some text, then right-click it → Save text style. Click a style to put it on what you select.</div>');
+    list.forEach((st, i) => {
+      const r = document.createElement('div'); r.className = 'tsr'; r.title = 'Click to use it on what you selected. Right-click to rename, update or remove it';
+      r.innerHTML = '<span></span><small></small>'; const name = r.querySelector('span'); name.textContent = st.name; r.querySelector('small').textContent = tsLabel(st);
+      Object.assign(name.style, { fontFamily: st.s.font ? `"${st.s.font}", var(--font)` : '', fontWeight: (st.s.bold ?? (st.type === 'title' || st.type === 'coll')) ? 800 : 500, fontStyle: st.s.italic ? 'italic' : '', textDecoration: [st.s.under && 'underline', st.s.strike && 'line-through'].filter(Boolean).join(' '),
+        textTransform: { upper: 'uppercase', lower: 'lowercase', title: 'capitalize' }[st.s.tcase] || '', letterSpacing: typeof st.s.ls === 'number' ? st.s.ls / 100 + 'em' : '', color: st.type === 'title' && st.s.tc && st.s.tc !== 'none' ? st.s.tc : '' });
+      if (st.s.font) useFont?.(st.s.font);
+      const rename = () => { name.contentEditable = 'true'; name.focus(); getSelection().selectAllChildren(name);
+        name.onblur = () => { name.contentEditable = 'false'; const v = name.textContent.trim(); if (v) st.name = v; renderTextStyles(); save(); };
+        name.onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); name.blur(); } if (ev.key === 'Escape') { name.textContent = st.name; name.blur(); } ev.stopPropagation(); }; };
+      name.ondblclick = e => { e.stopPropagation(); rename(); };
+      r.onclick = () => { if (name.isContentEditable) return;
+        if (applyTextStyle(st, selCards())) return;
+        if (sel.size) return chirp('Those cards have no text to style. Select some text, or click empty board first for a new note ✦', 3200);
+        const c = addAtCenter(st.type === 'title' ? 'title' : 'note', { text: st.name }); if (!c) return; applyTextStyle(st, [c]);
+        setTimeout(() => { startEdit(c.id); const t = cardsEl.querySelector(`[data-id="${c.id}"] [contenteditable="true"]`); if (t) getSelection().selectAllChildren(t); }, 30); };   // ready to type over
+      r.oncontextmenu = e => { e.preventDefault(); e.stopPropagation(); const one = selCards().find(c => SIZED.includes(c.type)); boardMenu(e, [
+        { label: 'Use on selected text', run: () => applyTextStyle(st, selCards()) || chirp('Select some text first ✦', 2500) },
+        { label: 'Rename', run: rename },
+        ...(one ? [{ label: 'Update from selected text', run: () => { Object.assign(st, tsOf(one)); renderTextStyles(); save(); chirp(`Updated “${st.name}” ✦`, 2500); } }] : []),
+        '-', { label: 'Remove from text styles', danger: true, run: () => { board.styles.text.splice(i, 1); renderTextStyles(); save(); } }]); };
+      el.appendChild(r);
+    });
+  }
   function renderPalette() {
+    renderTextStyles();
     const el = $('palette'); el.innerHTML = '';
-    if (!board.palette.length) { el.innerHTML = '<div class="palette-empty">Click a color card to name it and save it here. Each board keeps its own palette.</div>'; return; }
-    board.palette.forEach((p, i) => {
+    if (!board.styles.colors.length) { el.innerHTML = '<div class="palette-empty">Click a color card to name it and save it here. Each board keeps its own palette.</div>'; return; }
+    board.styles.colors.forEach((p, i) => {
       const r = document.createElement('div'); r.className = 'pal'; r.title = 'Click to add to the board';
       r.innerHTML = `<i style="background:${p.hex}"></i><span></span><small>${p.hex.slice(1)}</small>`;
       r.title = 'Click to add it to the board. Right-click to rename, change or remove it';
@@ -5629,7 +5892,7 @@ ${proseCSS()}
         name.onblur = done; name.onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); name.blur(); } if (ev.key === 'Escape') { name.textContent = p.name; name.blur(); } ev.stopPropagation(); }; };
       // change the color itself: color cards on the board that use it follow along
       const recolor = e => { const was = p.hex, rr = r.getBoundingClientRect();
-        openColor({ tint: true, title: `Change “${p.name}”`, hex: p.hex, presets: [p.hex, ...board.palette.filter(x => x !== p).map(x => x.hex)].slice(0, 10), at: { x: rr.right + 12, y: rr.top - 60 },
+        openColor({ tint: true, title: `Change “${p.name}”`, hex: p.hex, presets: [p.hex, ...board.styles.colors.filter(x => x !== p).map(x => x.hex)].slice(0, 10), at: { x: rr.right + 12, y: rr.top - 60 },
           apply: hex => { const from = p.hex; p.hex = hex; board.cards.filter(c => c.type === 'swatch' && c.hex === from).forEach(c => { c.hex = hex; renderCard(c); }); r.querySelector('i').style.background = hex; r.querySelector('small').textContent = hex.slice(1); save(); },
           reset: () => { const from = p.hex; p.hex = was; board.cards.filter(c => c.type === 'swatch' && c.hex === from).forEach(c => { c.hex = was; renderCard(c); }); renderPalette(); save(); } }); };
       r.onclick = () => { if (name.isContentEditable) return; addAtCenter('swatch', { hex: p.hex, label: p.name }); };
@@ -5638,7 +5901,7 @@ ${proseCSS()}
         { label: 'Rename', run: rename },
         { label: 'Change color…', run: recolor },
         '-',
-        { label: 'Remove from board colors', danger: true, run: () => { board.palette.splice(i, 1); renderPalette(); save(); chirp(`Removed “${p.name}” from this board's colors`, 2500); } }]); };
+        { label: 'Remove from board colors', danger: true, run: () => { board.styles.colors.splice(i, 1); renderPalette(); save(); chirp(`Removed “${p.name}” from this board's colors`, 2500); } }]); };
       el.appendChild(r);
     });
   }
@@ -5859,11 +6122,20 @@ ${proseCSS()}
     ['<path d="M3 13c1.5-4 3-4 4.5 0s3 4 4.5 0 3-4 4.5 0"/>', 'Squiggly lines', 'Wavy, zigzag and loopy lines you can tighten, round and wobble.'],
     ['<path d="M4 15 8 5l4 10M5.5 11.5h5M13 9h4M13 13h4"/>', 'Text, your way', 'Any size, line height, letter spacing, alignment, and UPPERCASE / lowercase / Title Case.'],
     ['<path d="M3 4h14M3 10h9M3 16h14"/><path d="M15 8l2 2-2 2"/>', 'Line things up', 'Alignment guides for everything, align and space buttons, and rotate or scale many things at once.'],
-    ['<path d="M10 3c3.9 0 7 2.7 7 6 0 2.4-1.6 4.4-4 5.4V17l-3-2h0c-3.9 0-7-2.7-7-6s3.1-6 7-6z"/>', 'Name your Mochi, and let her rest', 'Give Mochi a name, and try Calm or Calmest when you want her quiet ♡ Calm modes were Nikunj Tyagi’s idea, thank you!'],
+    ['<path d="M10 3c3.9 0 7 2.7 7 6 0 2.4-1.6 4.4-4 5.4V17l-3-2h0c-3.9 0-7-2.7-7-6s3.1-6 7-6z"/>', 'Name your Mochi, and let her rest', 'Give Mochi a name, and try Calm or Calmest when you want her quiet ♡'],
     ['<rect x="2.5" y="12" width="15" height="5" rx="2.5"/><path d="M6 8V3M10 8V5M14 8V4"/>', 'Toolbar and panels', 'Pick your icon size in Settings → Toolbar, and drag any panel to the height you like.'],
+  ], '1.9.0': [
+    ['<rect x="3" y="3" width="14" height="14" rx="2.5"/><path d="M3 8h14M3 12.5h14M8 3v14"/>', 'Tables', 'Press B for a table on the board. Tab and Enter move between cells, right-click adds rows and columns, and rows pasted from a spreadsheet arrive as a table.'],
+    ['<path d="M4 15 8 5l4 10M5.5 11.5h5"/><path d="M13 8h4M13 11h4M13 14h3"/>', 'Saved text styles', 'Right-click styled text → Save text style. It sits under Board colors; click it to put the same font, size, spacing and case on anything.'],
+    ['<path d="M11 3.5l5.5 5.5-6 6H6v-4.5z"/><path d="M3 17.5h14" opacity=".5"/>', 'Highlighter mode', 'In a doc, pick up the highlighter and drag over words. Drag again to erase, Esc puts it down.'],
+    ['<path d="M3 6.5h14v9.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 16z"/><path d="M2 3.5h16v3H2zM8 10h4"/>', 'Archive projects', 'Right-click a project → Archive to tuck it away. Archived, at the bottom of your projects, brings it back.'],
+    ['<circle cx="6" cy="6" r="2.5"/><circle cx="14" cy="6" r="2.5"/><circle cx="6" cy="14" r="2.5"/><circle cx="14" cy="14" r="2.5"/>', 'Color your canvases', 'Click the dot beside a board, folder or project to give it a color, so a project reads at a glance.'],
+    ['<path d="M3 5.5h14v9H8l-4 3v-3H3z"/><path d="M10 12.2c-.1 0-.2 0-.3-.1-.8-.7-1.9-1.4-1.9-2.4 0-.6.5-1.1 1.1-1.1.5 0 .9.2 1.1.6.2-.4.6-.6 1.1-.6.6 0 1.1.5 1.1 1.1 0 1-1.1 1.7-1.9 2.4-.1.1-.2.1-.3.1z"/>', 'Tell Jessa', 'Right-click Mochi → Send feedback, or tell her “tell Jessa…”. You see exactly what goes out first, and Settings → About has a little Support Mochi ♡ too.'],
   ] };
+  // ideas from people that shipped, thanked by name on that version's card: [what, name, role]. New ones come from the "thank me by name" box in feedback
+  const NEWS_CREDITS = { '1.7.0': [['Calm modes', 'Nikunj Tyagi', 'Product Designer']] };
   // the button on each version's card: try the headline thing
-  const NEWS_TRY = { '1.1.0': ['Try a template', () => $('tools').querySelector('[data-add="tpl"]').click()], '1.2.0': ['Make it yours', () => { $('gearBtn').click(); setTab('board'); setTimeout(() => $('settings').querySelector('.col-grid')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 120); }], '1.3.0': ['Write a doc', () => openDoc(addAtCenter('doc', { text: 'My first real doc' }))], '1.4.0': ['Record a video', () => startPlacing('video')], '1.5.0': ['Pick your camera', () => { $('gearBtn').click(); setTab('general'); setTimeout(() => $('settings').querySelector('.set-devices')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 120); }] };
+  const NEWS_TRY = { '1.9.0': ['Make a table', () => startPlacing('table')], '1.1.0': ['Try a template', () => $('tools').querySelector('[data-add="tpl"]').click()], '1.2.0': ['Make it yours', () => { $('gearBtn').click(); setTab('board'); setTimeout(() => $('settings').querySelector('.col-grid')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 120); }], '1.3.0': ['Write a doc', () => openDoc(addAtCenter('doc', { text: 'My first real doc' }))], '1.4.0': ['Record a video', () => startPlacing('video')], '1.5.0': ['Pick your camera', () => { $('gearBtn').click(); setTab('general'); setTimeout(() => $('settings').querySelector('.set-devices')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 120); }] };
   // a bigger update walks through extra steps: [title, subtitle] for each, after the list
   const NEWS_STEPS = { '1.6.0': [['Two new widgets, if you’d like them', 'They’re off until you switch them on.'], ['Find them anytime', 'Settings → Widgets turns any widget on or off.']] };
   let nwStep = 0, nwSteps = null, nwHead = null, nwGooT = 0;
@@ -5895,8 +6167,10 @@ ${proseCSS()}
     if (seen === v || !items.length) return;
     $('newsV').textContent = `Mochiboard ${v}`; nwHead = ['What’s new ✦', `Mochiboard ${v}`];
     nwSteps = Object.keys(NEWS_STEPS).filter(k => (!seen || after(k, seen)) && !after(k, v)).flatMap(k => NEWS_STEPS[k]); if (!nwSteps.length) nwSteps = null;
-    $('newsList').innerHTML = items.map(([e, t, d]) => `<li><span class="nw-e"><svg viewBox="0 0 20 20">${e}</svg></span><div><b>${esc(t)}</b><small>${esc(d)}</small></div></li>`).join('');
-    const tryK = Object.keys(NEWS_TRY).filter(k => !after(k, v)).pop(), tr = NEWS_TRY[tryK]; $('newsTry').textContent = tr[0]; $('newsTry').onclick = () => { closeNews(); tr[1](); };
+    const credits = Object.keys(NEWS_CREDITS).filter(k => (!seen || after(k, seen)) && !after(k, v)).flatMap(k => NEWS_CREDITS[k]);
+    $('newsList').innerHTML = items.map(([e, t, d]) => `<li><span class="nw-e"><svg viewBox="0 0 20 20">${e}</svg></span><div><b>${esc(t)}</b><small>${esc(d)}</small></div></li>`).join('')
+      + (credits.length ? `<li class="nw-credits"><span class="nw-e">♡</span><div><b>Thank you</b>${credits.map(([w, n, r]) => `<small>${esc(w)}: idea from ${esc(n)}${r ? ', ' + esc(r) : ''} ♡</small>`).join('')}</div></li>` : '');
+    const tryK = Object.keys(NEWS_TRY).filter(k => !after(k, v)).sort((a, b) => after(a, b) ? 1 : -1).pop(), tr = NEWS_TRY[tryK]; $('newsTry').textContent = tr[0]; $('newsTry').onclick = () => { closeNews(); tr[1](); };
     $('news').classList.add('on'); newsShow(0);
     if (nwSteps) $('newsTry').onclick = () => { if (nwStep === 0) closeNews(); else if (nwStep >= nwSteps.length) { closeNews(); $('gearBtn').click(); setTab('widgets'); } else newsShow(nwStep - 1); };
   }

@@ -4,7 +4,7 @@ The Mochiboard **code** is open source under the [MIT License](LICENSE): use it,
 
 The **brand** is different. These belong to Jessa Wolfe and are **all rights reserved**. They are not covered by the code license:
 
-- The name **"Mochiboard"** and the Mochiboard logo and app icon
+- The name **"Mochiboard™"** (a trademark of Jessa Wolfe) and the Mochiboard logo and app icon
 - **Mochi**, the pixel goo character, in any form: her drawings in the code (`web/goo.js`), the stamps (`web/stamps/`), her outfits, and any art of her
 - The app's pixel art and illustrations (`web/stamps/`, `assets/`)
 - The music (`web/music/`)

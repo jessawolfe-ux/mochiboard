@@ -1,12 +1,12 @@
 <p align="center"><img src="assets/icon.png" width="140" alt="Mochiboard"></p>
 
-<h1 align="center">Mochiboard</h1>
+<h1 align="center">Mochiboard™</h1>
 <p align="center"><b>A cozy planning canvas for your Mac, with Mochi inside.</b></p>
 <p align="center"><img src="assets/readme-cover.jpg" width="720" alt="A drawing of Mochiboard: someone asks Mochi for a landing page and she builds it"></p>
 
 ---
 
-Mochiboard is a free, open-source Mac and Windows app for the messy part before you open your design tools. Drop notes, pictures, links, checklists and colors on an endless board, arrange them however makes sense to *you*, and ask Mochi (a tiny pixel goo who thinks with Claude Code) to sort, plan, explore and build.
+Mochiboard™ is a free, open-source Mac and Windows app for the messy part before you open your design tools. Drop notes, pictures, links, checklists and colors on an endless board, arrange them however makes sense to *you*, and ask Mochi (a tiny pixel goo who thinks with Claude Code) to sort, plan, explore and build.
 
 **See it in action:** [jessa.art/mochiboard](https://jessa.art/#mochiboard.html)
 

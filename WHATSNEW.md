@@ -3,6 +3,17 @@
 Each update gets a short line here. Mochiboard shows the new ones in Settings when an update is ready.
 Write them for people, not for code: one line, what changed and why it's nice.
 
+## November 2026 · 1.9.0 (not released yet)
+
+- Tables: press B (or the new table tool) for a table on the board. Type in a cell, Tab and Enter move along (Enter on the last row adds one), the little + buttons add a row or column, and right-click → Table adds or deletes rows and columns or turns the header row off. Rows pasted from a spreadsheet, a web page or a CSV arrive as a table, and a table dropped into a doc stays a table.
+- Saved text styles: right-click styled text → Save text style. Styles sit under Board colors; click one to put the same font, size, weight, spacing, case and title color on whatever you've selected (or start a new note in it).
+- Highlighter mode in docs: Highlight → Highlighter mode, then drag over words. Drag again to erase; Esc puts it down.
+- Archive projects: right-click a project → Archive. It leaves your lists but keeps every folder and board; Archived (under your projects, and at the bottom of the Boards list) lets you look inside or restore it.
+- Color your canvases: click the little dot beside a board, folder or project (or right-click → Color) to give it a color. Folders turn that color in the list and on Home.
+- Tell Jessa: right-click Mochi → Send feedback to Jessa, the Feedback button in Mochi's chat, or just “tell Jessa…”. You see exactly what goes out before it sends, and you can ask to be thanked by name if your idea ships.
+- Support Mochi: a little Ko-fi pill in Settings → About.
+- Thank-yous: ideas from people that ship get their own line on the What's new card.
+
 ## October 2026 · 1.8.0
 
 - Masks, the Figma way: pick a shape (or a pen line, or a cut-out) with anything under it, right-click → Mask, and it becomes the window onto them. Layers shows the mask group, you can drag things in and out of it, and there are ready-made circles, hearts, blobs and more.

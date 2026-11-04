@@ -20,7 +20,7 @@
 <aside class="side side-r" id="sideR" aria-label="Right widgets"></aside>
 <aside class="side" id="side">
   <section class="box" data-box="boards">
-    <header><div class="brand" id="brand" title="Home: all projects"><canvas id="brandGoo" width="40" height="36"></canvas><span>Mochiboard</span></div><button class="mini gear" id="gearBtn" aria-label="Settings" data-tip="Settings"><svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/></svg></button><button class="mini" title="Minimize">–</button></header>
+    <header><div class="brand" id="brand" title="Home: all projects"><canvas id="brandGoo" width="40" height="36"></canvas><span>Mochiboard<sup class="tm">™</sup></span></div><button class="mini gear" id="gearBtn" aria-label="Settings" data-tip="Settings"><svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/></svg></button><button class="mini" title="Minimize">–</button></header>
       <button class="web-pill web-only get-app" title="Download the Mac app">Web demo · <b>Get the Mac app ↗</b></button>
     <div class="box-body">
       <button class="home-row" id="homeBtn"><svg viewBox="0 0 20 20" width="16" height="16"><path d="M3 9.5 10 3.5l7 6V16a1.5 1.5 0 0 1-1.5 1.5h-3v-5h-5v5h-3A1.5 1.5 0 0 1 3 16z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>All projects</button>
@@ -35,7 +35,7 @@
   </section>
   <section class="box" data-box="colors">
     <header><div class="label">Board colors</div><button class="mini" title="Minimize">–</button></header>
-    <div class="box-body"><div class="palette" id="palette"></div></div>
+    <div class="box-body"><div class="palette" id="palette"></div><div class="tstyles" id="tstyles"></div></div>
   </section>
   <section class="box" data-box="learn">
     <header><div class="label">Learn</div><button class="mini" title="Minimize">–</button></header>
@@ -108,6 +108,7 @@
     <button data-add="note" aria-label="Note · N" data-tip="Note · N"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8Z" /><path d="M15 3v4a2 2 0 0 0 2 2h4" /></svg></button>
       <button data-add="doc" aria-label="Doc · D" data-tip="Doc · D"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v4a2 2 0 0 0 2 2h4" /><path d="M10 9H8" /><path d="M16 13H8" /><path d="M16 17H8" /></svg></button>
     <button data-add="todo" aria-label="Checklist · C" data-tip="Checklist · C"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4" /><path d="m3 7 2 2 4-4" /><path d="M13 6h8" /><path d="M13 12h8" /><path d="M13 18h8" /></svg></button>
+    <button data-add="table" aria-label="Table · B" data-tip="Table · B"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2.5"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg></button>
       <button data-add="title" aria-label="Big title · T" data-tip="Big title · T"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7" /><line x1="9" x2="15" y1="20" y2="20" /><line x1="12" x2="12" y1="4" y2="20" /></svg></button>
       <button data-add="coll" aria-label="Collection · G" data-tip="Collection · G"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z" /><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65" /><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65" /></svg></button>
       <button data-add="canvas" aria-label="Canvas (a board inside this one)" data-tip="Canvas"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3a2 2 0 0 0-2 2" /><path d="M19 3a2 2 0 0 1 2 2" /><path d="M21 19a2 2 0 0 1-2 2" /><path d="M5 21a2 2 0 0 1-2-2" /><path d="M9 3h1" /><path d="M9 21h1" /><path d="M14 3h1" /><path d="M14 21h1" /><path d="M3 9v1" /><path d="M21 9v1" /><path d="M3 14v1" /><path d="M21 14v1" /></svg></button>
@@ -142,7 +143,7 @@
     <div class="mochi" id="mochi">
       <!-- Mochi's chat window -->
       <div class="m-chat" id="mChat">
-        <div class="mc-head"><canvas id="chatGoo" width="40" height="36"></canvas><b id="mcHeadName">Mochi</b><span class="mc-status" id="mcStatus"></span><button class="mc-btn" id="mcNew" title="Start a fresh chat">New chat</button><button class="mc-btn x" id="mcClose" title="Close (Esc)">×</button></div>
+        <div class="mc-head"><canvas id="chatGoo" width="40" height="36"></canvas><b id="mcHeadName">Mochi</b><span class="mc-status" id="mcStatus"></span><button class="mc-btn" id="mcFb" title="Send feedback to Jessa">Feedback ♡</button><button class="mc-btn" id="mcNew" title="Start a fresh chat">New chat</button><button class="mc-btn x" id="mcClose" title="Close (Esc)">×</button></div>
         <div class="mc-list" id="mcList"></div>
         <form class="mc-form" id="mcForm"><textarea id="mcInput" rows="1" placeholder="Ask Mochi… “group these by theme”" spellcheck="true"></textarea><button class="mc-send" title="Send (Enter)">↑</button></form>
       </div>
@@ -321,6 +322,21 @@
     <div class="lib-body"><nav class="lib-nav" id="libNav"></nav><div class="lib-list" id="libList"></div><div class="lib-detail" id="libDetail"></div></div>
   </div>
 </div>
+<!-- feedback to Jessa: write, see exactly what goes out, send -->
+<div class="settings fbs" id="fbSheet" aria-hidden="true">
+  <div class="set-panel fbs-panel" role="dialog" aria-labelledby="fbsTitle">
+    <div class="set-head"><h2 id="fbsTitle">Send feedback to Jessa ♡</h2><button class="dv-btn" id="fbsClose" title="Close (Esc)">×</button></div>
+    <div class="fbs-body" id="fbsWrite">
+      <div class="fbs-kinds" id="fbsKinds"><button type="button" data-k="Idea" class="on"><span>💡</span>An idea</button><button type="button" data-k="Something's broken"><span>❗</span>Something's broken</button><button type="button" data-k="Love note"><span>💖</span>A love note</button></div>
+      <label class="fbs-field"><span>Your note</span><textarea id="fbsMsg" rows="5" maxlength="4000" placeholder="I wish Mochi could…"></textarea></label>
+      <label class="fbs-field"><span>Your email <em>(optional, if you'd like a reply)</em></span><input id="fbsEmail" type="email" autocomplete="email" placeholder="you@example.com"></label>
+      <label class="fbs-check"><input type="checkbox" class="tgl" id="fbsCredit"><span><b>If it ships, thank me by name</b><small>Your name goes in the What's new notes, like “idea from Zen, product designer ♡”.</small></span></label>
+      <div class="fbs-row" id="fbsCreditRow" hidden><label class="fbs-field"><span>Your name</span><input id="fbsName" maxlength="60" autocomplete="name" placeholder="Zen"></label><label class="fbs-field"><span>Your role <em>(optional)</em></span><input id="fbsRole" maxlength="60" placeholder="product designer"></label></div>
+    </div>
+    <div class="fbs-body" id="fbsReview" hidden><p class="fbs-lead">This is exactly what goes to Jessa. Nothing from your boards is sent.</p><dl class="fbs-list" id="fbsList"></dl></div>
+    <div class="fbs-foot"><p class="fbs-msg" id="fbsStatus" role="status"></p><button class="set-btn" id="fbsBack" hidden>Edit</button><button class="set-btn hot" id="fbsNext">Review</button></div>
+  </div>
+</div>
 <div class="settings" id="settings">
   <div class="set-panel">
     <div class="set-head"><h2>Settings</h2><button class="dv-btn" id="setClose" title="Close">×</button></div>
@@ -405,7 +421,7 @@
       <section data-tab="general"><h3>Your boards</h3>
         <div class="set-row native-only"><div><b>Saved on this Mac</b><small id="boardCount">Your boards never leave your computer</small></div><button class="set-btn" id="revealBoards">Show in Finder</button></div>
       </section>
-      <section class="set-about" data-tab="about"><canvas id="aboutGoo" width="40" height="36"></canvas><div class="sa-text"><b>Mochiboard</b><small>A planning canvas for designers, with Mochi as your helper. Free and open source (MIT).</small></div></section>
+      <section class="set-about" data-tab="about"><canvas id="aboutGoo" width="40" height="36"></canvas><div class="sa-text"><b>Mochiboard<sup class="tm">™</sup></b><small>A planning canvas for designers, with Mochi as your helper. Free and open source (MIT). Mochiboard™ and Mochi are trademarks of Jessa Wolfe.</small></div></section>
       <section class="set-update native-only" id="setUpdate" data-tab="about"><div class="su-top"><div class="su-icon"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 10a6 6 0 1 1-1.8-4.3"/><path d="M16 3.5v3.2h-3.2"/></svg></div><div class="su-text"><b id="suTitle">Updates</b><small id="suSub">Checking for a new version…</small></div><button class="set-btn hot" id="suGo" hidden>Update now</button><button class="set-btn" id="suCheck">Check now</button></div><ul class="su-notes" id="suNotes" hidden></ul></section>
       <section data-tab="toolbar"><h3>Toolbar</h3>
         <div class="set-row"><div><b>Icon size</b><small>How big the tools at the bottom are. If they don't all fit on your screen, the extras tuck into a ··· menu at the end.</small></div><div class="seg" data-seg="tbSize"><button data-v="s">Small</button><button data-v="m">Medium</button><button data-v="l">Large</button></div></div>
@@ -418,6 +434,7 @@
       <section class="set-auto native-only" data-tab="about"><label class="set-row"><div><b>Update automatically</b><small>New versions install quietly when you quit Mochiboard. Your boards never change.</small></div><input type="checkbox" class="tgl" data-set="autoUpdate"></label></section>
       <section class="set-start" data-tab="about"><canvas id="setGoo" width="40" height="36"></canvas><div><b>New here, or need a refresher?</b><small>Mochi shows you around in about a minute</small></div><div class="set-btns"><button class="set-btn hot" id="redoTour">Take the tour ✦</button><button class="set-btn" id="redoSetup">Redo setup</button></div></section>
       <section class="set-start set-feedback" data-tab="about"><span class="sf-ic" aria-hidden="true">💌</span><div><b>Tell me what you think</b><small>Ideas, bugs, little wishes. I read every one, and if your idea ships I can thank you by name.</small></div><div class="set-btns"><button class="set-btn hot" id="sendFeedback">Send feedback ♡</button></div></section>
+      <section class="set-start set-feedback set-support" data-tab="about"><span class="sf-ic" aria-hidden="true">☕</span><div><b>Support Mochi</b><small>Mochiboard is free, with no accounts and no paid tiers. If it helps you plan, a coffee helps keep it that way.</small></div><div class="set-btns"><button class="set-btn hot" data-url="https://ko-fi.com/jessawolfe">Support Mochi ♡</button></div></section>
       <section class="set-maker" data-tab="about"><div class="sm-sig">made with love by</div><div class="sm-name">Jessa Wolfe</div><small>Product designer. I built Mochiboard for the way my brain plans things, and I hope it fits yours too.</small>
         <div class="sm-links"><button class="set-btn hot" data-url="https://jessa.art">jessa.art ↗</button><button class="set-btn" data-url="https://github.com/jessawolfe-ux/mochiboard">Mochiboard on GitHub ↗</button></div></section>
     </div>

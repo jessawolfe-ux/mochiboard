@@ -428,7 +428,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         "Pricing" {title, plans: [{name, price, features: [...], cta}]}, "CTA" {title, text, cta}, "Footer" {logo, text, cols: [["Heading", ["link", ...]]]}. A full page is usually 6 to 9 sections. \
         IMAGES: every "img"/"imgs" value is a short, vivid description of the photo that belongs there (e.g. "a dog walker laughing with a golden retriever in a sunny park"); the app shows it as a labeled placeholder the person can fill later. \
         LOOK: add "theme" to a screen to style it: {"bg": "#hex", "text": "#hex", "muted": "#hex", "primary": "#hex", "onPrimary": "#hex", "surface": "#hex", "font": "font family", "headFont": "font family"}. \
-        Use the board's "boardColors" when there are some, fonts from "fontsOnThisMac" or Google Fonts, and leave "theme" out when they ask for plain or gray wireframes. \
+        Use the board's saved colors ("styles.colors") when there are some, fonts from "fontsOnThisMac" or Google Fonts, and leave "theme" out when they ask for plain or gray wireframes. \
         Use real, specific words for the product (not "Lorem"). Put the explanation of each screen in its "note" (that becomes a note under the screen); don't also add separate notes for them. \
         FONTS: when they ask to explore, compare or suggest fonts or type, add "font" cards ({"type": "font", "font": "exact family name", "sample": "a short line in their product's voice", "tag": "why it fits, 2 to 4 words"}), never plain notes with font names. \
         Prefer families in "fontsOnThisMac"; you may also suggest Google Fonts by their exact name (the app loads them). A good exploration is 4 to 8 fonts, grouped by mood with titles. \
