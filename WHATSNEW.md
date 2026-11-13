@@ -3,6 +3,20 @@
 Each update gets a short line here. Mochiboard shows the new ones in Settings when an update is ready.
 Write them for people, not for code: one line, what changed and why it's nice.
 
+## November 2026 · 1.10.0
+
+- Your files: connect folders from your computer (one at a time, or all your files at once) in Settings → General → Your files. They show under On your Mac in the left box. Disconnecting only forgets; your files never move.
+- Folder cards: drag a connected folder onto a board to see what's inside, live. Double-click to open things, drag any file out to give it its own card.
+- File cards: drop files in from Finder (or right-click the board → Put a file here) for a card with a real preview that opens the file with a double-click. If a file moves, the card says so and helps you find it.
+- Mochi reads your files when you ask: "what's in this folder?" or "sum up this file". Read-only, only connected folders, and you can switch it off.
+- Mochi connects folders for you: ask about your files and she offers a one-tap Connect button, then tries again by herself. Drag a folder onto the board (or the left box) and it connects on its own. Say "connect all my folders" and she asks once, then connects everything.
+- Ask Mochi to change settings: "turn on dark mode", "hide the dot grid", "make yourself pink". She says what she changed, with an Undo.
+- Play your web pages and games: an .html file card has a ▶ Play button. Mochiboard runs it on localhost and opens it in your browser, no Terminal needed, and the address stays the same each time. It only ever shares folders you've connected (a game somewhere else gets a one-tap Connect first), and only with this computer. Ask Mochi to "put my game on the board" and she makes one.
+- Mochi designs in your style: ask for a start screen, menu or any screen and she looks at your real pages first (Mochiboard photographs them), reads your colors and fonts, and builds it from wireframe pieces using your own art, with a note on why she made each call.
+- Video layers: an animated logo or looping character plays right on the board, straight from your folder. A transparent .webm automatically swaps for its transparent .mov twin on a Mac, so it stays see-through.
+- Voice memos are written out in full now, not just the last few seconds (the Mac's recognizer starts over after every pause, so Mochi keeps each part). Deleting a memo while it plays stops it, and deleting one mid-recording lets go of the mic.
+- Keep boards anywhere: Settings → General → Your boards → Choose a folder… moves them to Dropbox or iCloud Drive so they follow you to your other computers.
+
 ## November 2026 · 1.9.0
 
 - Tables: press B (or the new table tool) for a table on the board. Type in a cell, Tab and Enter move along (Enter on the last row adds one), the little + buttons add a row or column, and right-click → Table adds or deletes rows and columns or turns the header row off. Rows pasted from a spreadsheet, a web page or a CSV arrive as a table, and a table dropped into a doc stays a table.

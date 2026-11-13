@@ -20,8 +20,11 @@ fn support() -> PathBuf {
     if let Ok(p) = std::env::var("MB_DATA") { return PathBuf::from(p); }
     dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("Mochiboard")
 }
-fn boards_dir() -> PathBuf { support().join("boards") }
-fn media_dir() -> PathBuf { support().join("media") }
+// where the boards live: the app's own folder, or one the person picked (Dropbox, OneDrive, a shared drive), remembered in location.json
+fn picked_root() -> Option<PathBuf> { std::fs::read_to_string(support().join("location.json")).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|j| j["path"].as_str().map(PathBuf::from)) }
+fn root() -> PathBuf { picked_root().filter(|p| p.is_dir()).unwrap_or_else(support) }
+fn boards_dir() -> PathBuf { root().join("boards") }
+fn media_dir() -> PathBuf { root().join("media") }
 fn safe(v: Option<&Value>) -> String {
     let s = match v { Some(Value::String(s)) => s.clone(), Some(v) => v.to_string(), None => "x".into() };
     s.chars().filter(|c| c.is_alphanumeric() || *c == '-').collect()
@@ -56,8 +59,8 @@ async fn mb(app: tauri::AppHandle, op: String, args: Value) -> Result<Value, Str
             std::fs::write(&tmp, serde_json::to_vec(b).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
             std::fs::rename(&tmp, &f).map_err(|e| e.to_string())?; Ok(json!(true))
         }
-        "folders" => Ok(std::fs::read_to_string(support().join("folders.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(json!([]))),
-        "saveFolders" => { std::fs::write(support().join("folders.json"), serde_json::to_vec(a.get("folders").unwrap_or(&json!([]))).unwrap()).map_err(|e| e.to_string())?; Ok(json!(true)) }
+        "folders" => Ok(std::fs::read_to_string(root().join("folders.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(json!([]))),
+        "saveFolders" => { std::fs::write(root().join("folders.json"), serde_json::to_vec(a.get("folders").unwrap_or(&json!([]))).unwrap()).map_err(|e| e.to_string())?; Ok(json!(true)) }
         "remove" => { let _ = std::fs::remove_file(boards_dir().join(format!("{}.json", safe(a.get("id"))))); Ok(json!(true)) }
         // the web
         "linkPreview" => Ok(link_preview(s(a, "url")).await),
@@ -98,6 +101,73 @@ async fn mb(app: tauri::AppHandle, op: String, args: Value) -> Result<Value, Str
             }
         }
         "reveal" => { let _ = app.opener().open_path(boards_dir().to_string_lossy(), None::<&str>); Ok(json!(true)) }
+        // connected folders: only the folders someone picks in the folder picker; disconnecting forgets the folder and never touches the files
+        "connected" => Ok(connected_summary()),
+        "connectFolder" => {
+            let picked = app.dialog().file().set_title("Pick the folders Mochiboard can see").blocking_pick_folders().unwrap_or_default();
+            let mut list = connected_list(); let mut added: Vec<String> = vec![];
+            let home = dirs::home_dir().unwrap_or_default();
+            for fp in picked { let Ok(p) = fp.into_path() else { continue };
+                if p.parent().is_none() || p == home { if add_all_files(&mut list) { added.push("All my files".into()); } continue; }   // a whole drive or the home folder = "All my files"
+                let ps = p.to_string_lossy().to_string(); if list.iter().any(|f| f["path"] == ps.as_str()) { continue; }
+                let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| ps.clone());
+                list.push(json!({ "id": uuid::Uuid::new_v4().to_string(), "path": ps, "name": name })); added.push(name);
+            }
+            save_connected(&list); Ok(json!({ "folders": connected_summary(), "added": added }))
+        }
+        // folders someone dragged in: dragging one in is the same as picking it, so it connects right away
+        "connectPaths" => {
+            let mut list = connected_list(); let mut added: Vec<String> = vec![]; let home = dirs::home_dir().unwrap_or_default();
+            for v in a.get("paths").and_then(|v| v.as_array()).cloned().unwrap_or_default() { let Some(raw) = v.as_str() else { continue }; let p = PathBuf::from(raw); if !p.is_dir() { continue; }
+                if p.parent().is_none() || p == home { if add_all_files(&mut list) { added.push("All my files".into()); } continue; }
+                let ps = p.to_string_lossy().to_string(); if list.iter().any(|f| f["path"] == ps.as_str()) || inside_connected(&ps) { continue; }
+                let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| ps.clone());
+                list.push(json!({ "id": uuid::Uuid::new_v4().to_string(), "path": ps, "name": name })); added.push(name); save_connected(&list);
+            }
+            save_connected(&list); Ok(json!({ "folders": connected_summary(), "added": added }))
+        }
+        // "All my files": the whole home folder in one go (the page asks first)
+        "connectAll" => { let mut list = connected_list(); let fresh = add_all_files(&mut list); save_connected(&list); Ok(json!({ "folders": connected_summary(), "added": if fresh { vec!["All my files"] } else { vec![] } })) }
+        "disconnectFolder" => { let id = s(a, "id"); let list: Vec<Value> = connected_list().into_iter().filter(|f| f["id"] != id).collect(); save_connected(&list); Ok(connected_summary()) }
+        "revealConnected" => {
+            let id = s(a, "id"); let p = connected_list().into_iter().find(|f| f["id"] == id).and_then(|f| f["path"].as_str().map(String::from));
+            match p { Some(p) if std::path::Path::new(&p).is_dir() => { let _ = app.opener().open_path(p, None::<&str>); Ok(json!(true)) }
+                _ => Err("I can't find that folder anymore. Was it moved or renamed?".into()) }
+        }
+        // folder cards and file cards: read-only looks at what the person put on the board
+        "listFolder" => { let p = s(a, "path"); if !inside_connected(p) { return Err("That folder isn’t connected anymore. Connect it again in Settings → General → Your files.".into()); } Ok(list_folder(p)) }
+        "fileInfo" => { let mut m = Map::new(); for p in a.get("paths").and_then(|v| v.as_array()).cloned().unwrap_or_default() { if let Some(p) = p.as_str() { m.insert(p.to_string(), file_info(p)); } } Ok(Value::Object(m)) }
+        "fileThumb" => Err("no preview".into()),   // the page draws a little badge instead
+        "openFile" => { let p = s(a, "path"); if !std::path::Path::new(p).exists() { return Err("I can’t find that file anymore. Was it moved or renamed?".into()); } let _ = app.opener().open_path(p, None::<&str>); Ok(json!(true)) }
+        "revealFile" => { let p = s(a, "path"); if !std::path::Path::new(p).exists() { return Err("I can’t find that file anymore. Was it moved or renamed?".into()); } let _ = app.opener().reveal_item_in_dir(p); Ok(json!(true)) }
+        "pickFiles" => {
+            let folders = a.get("folders").and_then(|v| v.as_bool()).unwrap_or(false); let mut d = app.dialog().file();
+            if !s(a, "start").is_empty() { d = d.set_directory(s(a, "start")); }
+            let picked: Vec<String> = if folders { d.set_title("Pick a folder to show on the board").blocking_pick_folders().unwrap_or_default() } else { d.set_title("Pick files to put on the board").blocking_pick_files().unwrap_or_default() }
+                .into_iter().filter_map(|f| f.into_path().ok()).map(|p| p.to_string_lossy().to_string()).collect();
+            Ok(json!(picked))
+        }
+        // a web page or game on this computer: serve its folder on localhost and hand back the address
+        "serveFile" => serve_file(s(a, "path"), s(a, "root")).await,
+        "lookAt" => Ok(json!([])),
+        "videoURL" => { let p = s(a, "path"); if !std::path::Path::new(p).exists() { return Err("I can’t find that video anymore.".into()); } if !inside_connected(p) { return Err("Connect the folder this video is in, and it can play on the board.".into()); }
+            let enc: String = p.replace('\\', "/").bytes().map(|b| if b.is_ascii_alphanumeric() || b"/-_.~".contains(&b) { (b as char).to_string() } else { format!("%{:02X}", b) }).collect();
+            Ok(json!({ "url": format!("mbmedia://file/{}", enc.trim_start_matches('/')), "from": p })) }   // photographing pages off screen is Mac-only for now; Mochi still reads the page's HTML, CSS and art
+        "readImage" => {
+            let p = s(a, "path"); let d = std::fs::read(p).map_err(|_| "I couldn’t open that picture.")?; if d.len() > 6_000_000 { return Err("That picture is too big to bring in.".into()); }
+            let ext = std::path::Path::new(p).extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default();
+            Ok(json!({ "src": format!("data:{};base64,{}", mime(&ext), B64.encode(&d)) }))
+        }
+        "watchPaths" => Ok(json!(false)),   // the page looks again on its own every few seconds
+        // where boards are saved
+        "boardsHome" => Ok(library_home()),
+        "moveBoards" => {
+            let Some(u) = app.dialog().file().set_title("Pick where your boards live").blocking_pick_folder().and_then(|f| f.into_path().ok()) else { return Ok(json!({ "cancelled": true })) };
+            if u.starts_with(support()) { return Err("That folder is inside Mochiboard itself. Pick somewhere else, like OneDrive or Documents.".into()); }
+            let dest = if u.file_name().map_or(false, |n| n == "Mochiboard") || u.join("boards").is_dir() { u } else { u.join("Mochiboard") };
+            move_library(&dest)?; Ok(library_home())
+        }
+        "resetBoardsHome" => { move_library(&support())?; let _ = std::fs::remove_file(support().join("location.json")); Ok(library_home()) }
         "openURL" => { let u = s(a, "url"); if u.starts_with("http") || u.starts_with("mailto:") || u.starts_with("spotify:") { let _ = app.opener().open_url(u, None::<&str>); } Ok(json!(true)) }
         // videos: saved as their own files in pieces (big files cross the bridge in chunks), shown through the mbmedia: address
         "mediaBegin" => {
@@ -187,11 +257,13 @@ async fn connections() -> Value {
     json!({ "claude": true, "mobbin": ok("mobbin"), "higgsfield": ok("higgsfield") })
 }
 // the prompt goes in through stdin: a board can be far longer than Windows allows on a command line
-async fn run_claude(prompt: &str, tools: &[&str], timeout: u64) -> Result<String, String> {
+async fn run_claude(prompt: &str, tools: &[&str], timeout: u64) -> Result<String, String> { run_claude_in(prompt, tools, &[], timeout).await }
+async fn run_claude_in(prompt: &str, tools: &[&str], dirs: &[String], timeout: u64) -> Result<String, String> {
     use tokio::io::AsyncWriteExt;
     let claude = find_claude().ok_or("I need Claude Code to think. Set it up from mochiboard.app/connect.html, then try again.")?;
     let mut c = claude_cmd(&claude); c.args(["-p", "--output-format", "json"]);
     if !tools.is_empty() { c.args(["--allowedTools", &tools.join(",")]); }
+    for d in dirs { c.args(["--add-dir", d]); }
     let mut child = c.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().map_err(|e| e.to_string())?;
     let mut stdin = child.stdin.take().unwrap(); let p = prompt.to_string();
     tokio::spawn(async move { let _ = stdin.write_all(p.as_bytes()).await; let _ = stdin.shutdown().await; });
@@ -215,7 +287,18 @@ async fn ask(a: &Value) -> Result<String, String> {
     // only the helpers the person has switched on; the image generator only after they tap yes
     let mut tools: Vec<&str> = if mobbin { vec!["mcp__claude_ai_Mobbin__search_screens", "mcp__claude_ai_Mobbin__search_flows", "mcp__claude_ai_Mobbin__search_sections"] } else { vec![] };
     if confirmed && higgs { tools.extend(["mcp__claude_ai_higgsfield__generate_image", "mcp__claude_ai_higgsfield__generate_image_batch", "mcp__claude_ai_higgsfield__jobs_wait", "mcp__claude_ai_higgsfield__models_explore", "mcp__claude_ai_higgsfield__show_generation_by_ids"]); }   // Claude usually reaches for generate_image (one picture)
-    run_claude(&prompt, &tools, 300).await
+    // their files: only connected folders, only when they've let Mochi read them, and only tools that read
+    let files = a.get("files").and_then(|v| v.as_bool()).unwrap_or(false);
+    let readable: Vec<(String, String)> = if files { connected_list().iter().filter_map(|f| { let p = f["path"].as_str()?.to_string(); if std::path::Path::new(&p).is_dir() { Some((f["name"].as_str().unwrap_or(&p).to_string(), p)) } else { None } }).collect() } else { vec![] };
+    let mut prompt = prompt;
+    if !readable.is_empty() {
+        tools.extend(["Read", "Glob", "Grep"]);
+        prompt.push_str(&prompts::FILES.replace("{FOLDERS}", &readable.iter().map(|(n, p)| format!("\"{n}\" = {p}")).collect::<Vec<_>>().join(", ")));
+    }
+    else { prompt.push_str(&prompts::NO_FILES.replace("{OFF}", if files { "" } else { " (they switched off letting you read them)" })); }
+    prompt.push_str(prompts::DESIGN);
+    let dirs: Vec<String> = readable.into_iter().map(|(_, p)| p).collect();
+    run_claude_in(&prompt, &tools, &dirs, 300).await
 }
 // Claude Code's JSON answer: note what it used (usage.json, same as the Mac app), hand back just the words
 fn claude_result(j: Option<&Value>, raw: &[u8]) -> String {
@@ -228,6 +311,23 @@ fn claude_result(j: Option<&Value>, raw: &[u8]) -> String {
     all.push(entry); if all.len() > 5000 { let k = all.len() - 5000; all.drain(0..k); }
     let _ = std::fs::write(&f, serde_json::to_vec(&all).unwrap());
     result.to_string()
+}
+// connected folders live in one small file next to the boards: [{id, path, name}]
+fn connected_list() -> Vec<Value> { std::fs::read_to_string(support().join("connected.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default() }
+fn save_connected(list: &[Value]) { let _ = std::fs::write(support().join("connected.json"), serde_json::to_vec(list).unwrap_or_default()); }
+fn add_all_files(list: &mut Vec<Value>) -> bool {
+    if list.iter().any(|f| f["all"] == "1") { return false; }
+    let home = dirs::home_dir().unwrap_or_default().to_string_lossy().to_string();
+    list.insert(0, json!({ "id": uuid::Uuid::new_v4().to_string(), "path": home, "name": "All my files", "all": "1" })); true
+}
+fn connected_summary() -> Value {
+    let home = dirs::home_dir().map(|h| h.to_string_lossy().to_string()).unwrap_or_default();
+    json!(connected_list().iter().map(|f| {
+        let p = f["path"].as_str().unwrap_or(""); let here = std::path::Path::new(p).is_dir();
+        let n = if here { std::fs::read_dir(p).into_iter().flatten().flatten().filter(|e| !e.file_name().to_string_lossy().starts_with('.')).count() } else { 0 };
+        let shown = if !home.is_empty() && p.starts_with(&home) { format!("~{}", &p[home.len()..]) } else { p.to_string() };
+        json!({ "id": f["id"], "name": f["name"], "path": shown, "abs": p, "missing": !here, "count": n, "all": f["all"] == "1" })
+    }).collect::<Vec<_>>())
 }
 fn usage_summary() -> Value {
     let all: Vec<Value> = { let _g = USAGE_LOCK.lock().unwrap(); std::fs::read_to_string(support().join("usage.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default() };
@@ -297,8 +397,9 @@ fn sweep_media() {
 fn media_response(req: http::Request<Vec<u8>>) -> http::Response<Vec<u8>> {
     let name = req.uri().path().rsplit('/').next().unwrap_or("").to_string();
     let bad = |code: u16| http::Response::builder().status(code).header("Access-Control-Allow-Origin", "*").body(vec![]).unwrap();
-    if name.is_empty() || name.contains("..") { return bad(404); }
-    let f = media_dir().join(&name); let Ok(meta) = std::fs::metadata(&f) else { return bad(404) }; let size = meta.len(); if size == 0 { return bad(404); }
+    // /file/<path>: a video in one of their connected folders, played in place
+    let f = if let Some(rest) = req.uri().path().strip_prefix("/file/") { let p = pct_decode(rest); if !inside_connected(&p) { return bad(403); } PathBuf::from(p) }
+        else { if name.is_empty() || name.contains("..") { return bad(404); } media_dir().join(&name) }; let Ok(meta) = std::fs::metadata(&f) else { return bad(404) }; let size = meta.len(); if size == 0 { return bad(404); }
     let (mut start, mut end, mut partial) = (0u64, size - 1, false);
     if let Some(r) = req.headers().get("range").and_then(|v| v.to_str().ok()).and_then(|r| r.strip_prefix("bytes=")) {
         partial = true; let mut it = r.splitn(2, '-'); let (a, b) = (it.next().unwrap_or(""), it.next().unwrap_or(""));
@@ -358,3 +459,129 @@ fn main() {
 }
 #[allow(dead_code)]
 fn _unused(_: Map<String, Value>) {}
+
+// ---------- folder cards, file cards and where boards are saved ----------
+fn canon(p: &str) -> PathBuf { std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p)) }
+fn inside_connected(p: &str) -> bool { let want = canon(p); connected_list().iter().any(|f| f["path"].as_str().map_or(false, |r| want.starts_with(canon(r)))) }
+fn secs(t: std::io::Result<std::time::SystemTime>) -> f64 { t.ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0.0, |d| d.as_secs_f64()) }
+fn hidden(name: &str, meta: &std::fs::Metadata) -> bool {
+    #[cfg(windows)] { use std::os::windows::fs::MetadataExt; if meta.file_attributes() & 0x2 != 0 { return true; } }
+    let _ = meta; name.starts_with('.') || name.eq_ignore_ascii_case("desktop.ini") || name.eq_ignore_ascii_case("thumbs.db")
+}
+fn list_folder(p: &str) -> Value {
+    let Ok(rd) = std::fs::read_dir(p) else { return json!({ "missing": true, "items": [] }) };
+    let mut out: Vec<Value> = rd.flatten().filter_map(|e| {
+        let meta = e.metadata().ok()?; let name = e.file_name().to_string_lossy().to_string(); if hidden(&name, &meta) { return None; }
+        let path = e.path(); let dir = meta.is_dir();
+        Some(json!({ "name": name, "path": path.to_string_lossy(), "dir": dir, "ext": if dir { String::new() } else { path.extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default() }, "size": meta.len(), "mod": secs(meta.modified()) }))
+    }).collect();
+    out.sort_by(|a, b| b["dir"].as_bool().cmp(&a["dir"].as_bool()).then_with(|| a["name"].as_str().unwrap_or("").to_lowercase().cmp(&b["name"].as_str().unwrap_or("").to_lowercase())));
+    let total = out.len(); out.truncate(400);
+    json!({ "missing": false, "total": total, "items": out })
+}
+fn file_info(p: &str) -> Value {
+    match std::fs::metadata(p) { Ok(m) => json!({ "exists": true, "dir": m.is_dir(), "size": m.len(), "mod": secs(m.modified()), "kind": "" }), Err(_) => json!({ "exists": false }) }
+}
+fn library_home() -> Value {
+    let r = root(); let n = std::fs::read_dir(r.join("boards")).into_iter().flatten().flatten().filter(|e| e.path().extension().map_or(false, |x| x == "json")).count();
+    let home = dirs::home_dir().unwrap_or_default();
+    let shown = match r.strip_prefix(&home) { Ok(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()), Err(_) => r.display().to_string() };
+    let missing = picked_root().filter(|p| !p.is_dir()).map(|p| json!(p.display().to_string())).unwrap_or(Value::Null);
+    json!({ "path": shown, "custom": r != support(), "missing": missing, "count": n })
+}
+// copy every board, video and the library file into the new home, check they arrived, then clear the old copies (a newer board already there stays)
+fn move_library(dest: &PathBuf) -> Result<(), String> {
+    let from = root(); if canon(&dest.to_string_lossy()) == canon(&from.to_string_lossy()) { return Ok(()); }
+    let modt = |p: &PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let mut moved: Vec<(PathBuf, PathBuf)> = vec![];
+    for sub in ["boards", "media"] {
+        let (a, b) = (from.join(sub), dest.join(sub)); std::fs::create_dir_all(&b).map_err(|e| format!("I couldn't make a folder there: {e}"))?;
+        for e in std::fs::read_dir(&a).into_iter().flatten().flatten() {
+            let f = e.path(); let name = e.file_name(); let n = name.to_string_lossy(); if n.starts_with('.') || n.ends_with(".tmp") { continue; }
+            let t = b.join(&name);
+            if t.exists() { if modt(&t) >= modt(&f) { moved.push((f, t)); continue; } let _ = std::fs::remove_file(&t); }
+            std::fs::copy(&f, &t).map_err(|e| format!("I couldn't copy {n}: {e}"))?; moved.push((f, t));
+        }
+    }
+    let read = |p: PathBuf| { // the older list (folders only, saved before projects existed) counts too
+        let v = std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).unwrap_or(json!({}));
+        match v { Value::Array(a) if !a.is_empty() => json!({ "projects": [], "folders": a }), Value::Object(_) => v, _ => json!({}) } };
+    let (mine, theirs) = (read(from.join("folders.json")), read(dest.join("folders.json")));
+    if mine.as_object().map_or(false, |m| !m.is_empty()) || theirs.as_object().map_or(false, |m| !m.is_empty()) {
+        let mut merged = if theirs.is_object() { theirs.clone() } else { json!({}) };
+        for key in ["projects", "folders"] {
+            let b = mine[key].as_array().cloned().unwrap_or_default(); let ids: Vec<Value> = b.iter().map(|x| x["id"].clone()).collect();
+            let mut list: Vec<Value> = theirs[key].as_array().cloned().unwrap_or_default().into_iter().filter(|x| !ids.contains(&x["id"])).collect(); list.extend(b);
+            merged[key] = json!(list);
+        }
+        std::fs::write(dest.join("folders.json"), serde_json::to_vec(&merged).unwrap_or_default()).map_err(|_| "I couldn't write the library file there.".to_string())?;
+    }
+    if moved.iter().any(|(_, t)| !t.exists()) { return Err("Some boards didn't arrive, so I left everything where it was.".into()); }
+    // only the app's own private folder is emptied; a picked folder (maybe shared with another computer) keeps its copies
+    if canon(&from.to_string_lossy()) == canon(&support().to_string_lossy()) { for (f, _) in &moved { let _ = std::fs::remove_file(f); } let _ = std::fs::remove_file(from.join("folders.json")); }
+    if canon(&dest.to_string_lossy()) == canon(&support().to_string_lossy()) { let _ = std::fs::remove_file(support().join("location.json")); }
+    else { let _ = std::fs::write(support().join("location.json"), serde_json::to_vec(&json!({ "path": dest.to_string_lossy() })).unwrap_or_default()); }
+    Ok(())
+}
+
+// ---------- a tiny web server for one folder, only reachable from this computer (127.0.0.1); same folder, same port; files are never cached ----------
+static SERVERS: Mutex<Vec<(PathBuf, u16)>> = Mutex::new(Vec::new());
+fn mime(ext: &str) -> &'static str {
+    match ext { "html" | "htm" => "text/html; charset=utf-8", "js" | "mjs" => "text/javascript", "css" => "text/css", "json" => "application/json", "png" => "image/png", "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif", "webp" => "image/webp", "svg" => "image/svg+xml", "ico" => "image/x-icon", "mp3" => "audio/mpeg", "wav" => "audio/wav", "ogg" => "audio/ogg", "m4a" => "audio/mp4",
+        "mp4" => "video/mp4", "webm" => "video/webm", "wasm" => "application/wasm", "glb" => "model/gltf-binary", "gltf" => "model/gltf+json", "txt" | "md" => "text/plain; charset=utf-8",
+        "woff2" => "font/woff2", "woff" => "font/woff", "ttf" => "font/ttf", "otf" => "font/otf", "xml" => "application/xml", "csv" => "text/csv", _ => "application/octet-stream" }
+}
+async fn serve_file(path: &str, root: &str) -> Result<Value, String> {
+    let f = PathBuf::from(path); if !f.exists() { return Err("I can’t find that file anymore. Was it moved or renamed?".into()); }
+    if !inside_connected(path) { return Err("Connect the folder it lives in first, then press Play again ✦".into()); }   // only folders they chose are ever shared
+    let mut r = f.parent().map(PathBuf::from).unwrap_or_default(); if !root.is_empty() && inside_connected(root) && f.starts_with(root) { r = PathBuf::from(root); }
+    let rel: String = f.strip_prefix(&r).map(|p| p.components().map(|c| url_encode(&c.as_os_str().to_string_lossy())).collect::<Vec<_>>().join("/")).unwrap_or_default();
+    if let Some((_, port)) = SERVERS.lock().unwrap().iter().find(|(p, _)| *p == r) { return Ok(json!(format!("http://localhost:{port}/{rel}"))); }
+    let mut h: u32 = 2166136261; for b in r.to_string_lossy().bytes() { h = (h ^ b as u32).wrapping_mul(16777619); }
+    let base = 8100 + (h % 800) as u16;
+    for port in base..base + 24 {
+        let Ok(l) = tokio::net::TcpListener::bind(("127.0.0.1", port)).await else { continue };
+        { let mut list = SERVERS.lock().unwrap();   // another page from this folder got a server first while we were binding: use that one
+          if let Some((_, p2)) = list.iter().find(|(p, _)| *p == r) { return Ok(json!(format!("http://localhost:{p2}/{rel}"))); }
+          list.push((r.clone(), port)); }
+        let root = r.clone();
+        tokio::spawn(async move { loop { let Ok((sock, _)) = l.accept().await else { break }; let root = root.clone(); tokio::spawn(async move { let _ = answer(sock, root, port).await; }); } });
+        return Ok(json!(format!("http://localhost:{port}/{rel}")));
+    }
+    Err("I couldn’t find a free port to run it on.".into())
+}
+async fn answer(mut sock: tokio::net::TcpStream, root: PathBuf, port: u16) -> std::io::Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut buf = vec![]; let mut chunk = [0u8; 8192];
+    loop { let n = sock.read(&mut chunk).await?; if n == 0 { return Ok(()); } buf.extend_from_slice(&chunk[..n]); if buf.windows(4).any(|w| w == b"\r\n\r\n") || buf.len() > 1_000_000 { break; } }
+    let head = String::from_utf8_lossy(&buf).to_string(); let mut lines = head.split("\r\n"); let first: Vec<&str> = lines.next().unwrap_or("").split(' ').collect();
+    let send = |status: &str, ctype: &str, body: Vec<u8>, extra: String| format!("HTTP/1.1 {status}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\n{extra}\r\n", body.len()).into_bytes().into_iter().chain(body).collect::<Vec<u8>>();
+    if first.len() < 2 || (first[0] != "GET" && first[0] != "HEAD") { return sock.write_all(&send("405 Method Not Allowed", "text/plain", vec![], String::new())).await; }
+    // only pages on this computer asking by its local name; a website pretending to be localhost (DNS rebinding) is turned away
+    let host = head.split("\r\n").find(|l| l.to_lowercase().starts_with("host:")).map(|l| l[5..].trim().to_lowercase()).unwrap_or_default();
+    if host != format!("localhost:{port}") && host != format!("127.0.0.1:{port}") { return sock.write_all(&send("403 Forbidden", "text/plain", vec![], String::new())).await; }
+    let mut rel = url_decode(first[1].split('?').next().unwrap_or("/")); if rel.ends_with('/') { rel.push_str("index.html"); }
+    // each piece must be a plain name: no "..", no drive letters or backslashes that would jump out of the folder on Windows
+    let mut f = root.clone(); for part in rel.split('/').filter(|p| !p.is_empty()) {
+        if part == ".." || part.contains(':') || part.contains('\\') || std::path::Path::new(part).is_absolute() { return sock.write_all(&send("404 Not Found", "text/plain", b"Not found".to_vec(), String::new())).await; }
+        f.push(part); }
+    if !canon(&f.to_string_lossy()).starts_with(canon(&root.to_string_lossy())) { return sock.write_all(&send("404 Not Found", "text/plain", b"Not found".to_vec(), String::new())).await; }
+    if f.is_dir() { f.push("index.html"); }
+    let Ok(data) = tokio::fs::read(&f).await else { return sock.write_all(&send("404 Not Found", "text/plain", format!("Not found: {rel}").into_bytes(), String::new())).await };
+    let ctype = mime(&f.extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default()); let size = data.len();
+    if let Some(r) = lines.find(|l| l.to_lowercase().starts_with("range: bytes=")) {
+        let spec = &r[13..]; let (a, b) = spec.split_once('-').unwrap_or((spec, ""));
+        let (start, end) = if a.trim().is_empty() { (size.saturating_sub(b.trim().parse().unwrap_or(0)), size.saturating_sub(1)) } else { (a.trim().parse().unwrap_or(0), b.trim().parse().unwrap_or(size.saturating_sub(1)).min(size.saturating_sub(1))) };
+        let body = if start <= end && start < size { data[start..=end].to_vec() } else { vec![] };
+        let extra = format!("Content-Range: bytes {start}-{}/{size}\r\n", start + body.len().saturating_sub(1));
+        return sock.write_all(&send("206 Partial Content", ctype, if first[0] == "HEAD" { vec![] } else { body }, extra)).await;
+    }
+    sock.write_all(&send("200 OK", ctype, if first[0] == "HEAD" { vec![] } else { data }, String::new())).await
+}
+fn url_decode(s: &str) -> String { let b = s.as_bytes(); let mut out = vec![]; let mut i = 0;
+    while i < b.len() { if b[i] == b'%' && i + 2 < b.len() { if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) { out.push(v); i += 3; continue; } } out.push(b[i]); i += 1; }
+    String::from_utf8_lossy(&out).to_string() }
+fn url_encode(s: &str) -> String { s.bytes().map(|c| if c.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=@".contains(&c) { (c as char).to_string() } else { format!("%{c:02X}") }).collect() }
+fn pct_decode(s: &str) -> String { let b = s.as_bytes(); let mut out = vec![]; let mut i = 0; while i < b.len() { if b[i] == b'%' && i + 2 < b.len() + 0 && i + 2 <= b.len() - 1 { if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) { out.push(v); i += 3; continue; } } out.push(b[i]); i += 1; }
+    let t = String::from_utf8_lossy(&out).to_string(); if cfg!(windows) { t.replace('/', "\\") } else if t.starts_with('/') { t } else { format!("/{t}") } }

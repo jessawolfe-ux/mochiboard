@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds the downloadable Mochiboard.zip (Apple chip + Intel) and publishes it as a GitHub Release.
+# Builds the downloadable Mochiboard.zip (Apple chip + Intel) and publishes it as a GitHub Release, with the release video when there is one.
 #   ./make-release.sh          build + publish the version in VERSION
 #   ./make-release.sh --dry    build the zip only
 # People download it from https://github.com/jessawolfe-ux/mochiboard/releases/latest/download/Mochiboard.zip
@@ -52,8 +52,28 @@ echo "  ✓ $OUT/Mochiboard.zip ($(du -h "$OUT/Mochiboard.zip" | cut -f1))"
 [ "${1:-}" = "--dry" ] && exit 0
 # release notes: the newest section of WHATSNEW.md
 NOTES="$(awk '/^## /{n++} n==1 && /^- /' WHATSNEW.md)"
+# the release video goes on the release too: "Mochiboard 1.10 (wide).mp4" (+ "(thumbnail).png" beside it) from ~/Desktop/Posts & videos,
+# or VIDEO=/path/to/video.mp4 [THUMB=/path/to/thumb.png]; NOVIDEO=1 skips it. Patch versions (1.10.1) only get one if a video names that exact version.
+VV="${V%.0}"; MEDIA=(); TOP=""
+[ -z "${NOVIDEO:-}" ] && [ -z "${VIDEO:-}" ] && VIDEO="$(ls -t "$HOME/Desktop/Posts & videos"/*/"Mochiboard $VV (wide).mp4" 2>/dev/null | head -1)"
+if [ -z "${NOVIDEO:-}" ] && [ -f "${VIDEO:-}" ]; then
+  [ -z "${THUMB:-}" ] && THUMB="${VIDEO% (wide).mp4} (thumbnail).png"
+  cp "$VIDEO" "$OUT/Mochiboard-$VV-whats-new.mp4"; MEDIA+=("$OUT/Mochiboard-$VV-whats-new.mp4")
+  DL="https://github.com/jessawolfe-ux/mochiboard/releases/download/v$V"
+  MIN=$( { ffmpeg -i "$VIDEO" 2>&1 || true; } | awk -F'[:,. ]+' '/Duration:/{printf "%d:%02d", $3*60+$4, $5; exit}')
+  if [ -f "$THUMB" ]; then
+    cp "$THUMB" "$OUT/Mochiboard-$VV-whats-new.png"; MEDIA+=("$OUT/Mochiboard-$VV-whats-new.png")
+    TOP="[![What's new in Mochiboard $VV: watch the video]($DL/Mochiboard-$VV-whats-new.png)]($DL/Mochiboard-$VV-whats-new.mp4)
+
+"
+  fi
+  TOP="$TOP**▶ [Watch what's new in $VV]($DL/Mochiboard-$VV-whats-new.mp4)**${MIN:+ ($MIN)}
+
+"
+  echo "  ✓ Video: $(basename "$VIDEO")"
+else echo "  (no release video for $VV: put \"Mochiboard $VV (wide).mp4\" in ~/Desktop/Posts & videos, or VIDEO=/path)"; fi
 git push -q origin "$(git branch --show-current)" 2>/dev/null || true   # the tag must point at this branch's commit (stable for a fix, main for a new version), not whatever the default branch has
-gh release create "v$V" "$OUT/Mochiboard.zip" --target "$(git branch --show-current)" --title "Mochiboard $V" --notes "$NOTES
+gh release create "v$V" "$OUT/Mochiboard.zip" "${MEDIA[@]}" --target "$(git branch --show-current)" --title "Mochiboard $V" --notes "$TOP$NOTES
 
 $( [ -n "$SIGNED" ] && echo "**Mac:** Mochiboard.zip below. Unzip it, drag Mochiboard into Applications, and open it. It’s signed and notarized with Apple, so it opens like any Mac app." || echo "**Mac:** Mochiboard.zip below. Unzip it and drag Mochiboard into Applications. The first time, your Mac says it “could not verify Mochiboard is free of malware”: that’s because this build isn’t notarized by Apple. On macOS 15: double-click it once, click Done, then System Settings → Privacy & Security → scroll to Security → **Open Anyway**. On macOS 13/14: right-click → **Open**. Once." )
 

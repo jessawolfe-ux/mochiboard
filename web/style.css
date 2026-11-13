@@ -701,7 +701,7 @@ body.dark .tgl { background: #3e3846; }
 body.dark .cp-fields input, body.dark .linkbox input, body.dark .capture input { background: var(--surface-2); color: var(--ink); border-color: #3e3846; }
 /* cards: white cards turn dark; pastel cards stay pastel with dark words */
 body.dark .card > .frame { box-shadow: 0 10px 30px rgba(0, 0, 0, .35); }
-body.dark .card.c-white > .frame, body.dark .card.link > .frame, body.dark .card.doc > .frame, body.dark .card.canvas > .frame, body.dark .card.audio > .frame, body.dark .card.swatch > .frame, body.dark .card.image > .frame { background: #322d38 !important; }
+body.dark .card.c-white > .frame, body.dark .card.link > .frame, body.dark .card.file > .frame, body.dark .card.folder > .frame, body.dark .card.doc > .frame, body.dark .card.canvas > .frame, body.dark .card.audio > .frame, body.dark .card.swatch > .frame, body.dark .card.image > .frame { background: #322d38 !important; }
 body.dark .card:not(.c-white):is(.note, .todo) .body { color: #39343f; }
 body.dark .card:not(.c-white):is(.note, .todo) .nname:empty::before, body.dark .card:not(.c-white):is(.note, .todo) .text:empty::before { color: rgba(57, 52, 63, .45); }
 body.dark .card.shape .text { color: #39343f; }
@@ -740,9 +740,9 @@ body.dark .tray-head b, body.dark .sb-dots button, body.dark .tile .mf { color: 
 .mochi.chat .m-bubble { display: none; }
 .mc-head { display: flex; align-items: center; gap: 8px; padding: 12px 12px 10px 16px; border-bottom: 1px solid #f2ecf3; }
 .mc-head canvas { width: 26px; height: 23px; image-rendering: pixelated; }
-.mc-head b { font: 800 15px/1 var(--font); }
-.mc-status { flex: 1; font: 600 11px/1 var(--font); color: var(--pink-deep); }
-.mc-btn { border: 0; background: none; padding: 6px 9px; border-radius: 999px; font: 600 11.5px/1 var(--font); color: var(--ink-soft); cursor: pointer; }
+.mc-head b { flex: none; white-space: nowrap; max-width: 120px; overflow: hidden; text-overflow: ellipsis; font: 800 15px/1 var(--font); }
+.mc-status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 11px/1.2 var(--font); color: var(--pink-deep); }   /* a long status trims itself; the buttons never wrap */
+.mc-btn { flex: none; white-space: nowrap; border: 0; background: none; padding: 6px 9px; border-radius: 999px; font: 600 11.5px/1 var(--font); color: var(--ink-soft); cursor: pointer; }
 .mc-btn:hover { background: var(--blush); color: var(--ink); }
 .mc-btn.x { font-size: 18px; padding: 2px 9px; }
 .mc-list { flex: 1; overflow: auto; padding: 14px 14px 6px; display: flex; flex-direction: column; gap: 8px; user-select: text; -webkit-user-select: text; }
@@ -2762,9 +2762,96 @@ body.dark .tile.folder[style*="--fcol"] .tile-art .tab::after { background: radi
 
 body .docview.hl-pen #dvBody, body .docview.hl-pen #dvBody * { cursor: var(--pen) !important; }
 .fbs-panel button:focus-visible, .fbs-panel .tgl:focus-visible { outline: 2.5px solid var(--pink); outline-offset: 2px; }
-/* Mochi's chat sits above the right-hand panels while it's open (they were covering its × and New chat) */
-body:has(#mochi.chat) #sideR { z-index: 0; }
+/* Mochi's chat moves left of the right-hand panels while it's open (app.js fitChat), so both stay visible and clickable */
 /* phones: the Settings tabs scroll sideways so About (and the Ko-fi pill) can be reached */
 body.phone .set-tabs { align-self: stretch; max-width: calc(100% - 32px); margin-left: 16px; margin-right: 16px; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
 body.phone .set-tabs::-webkit-scrollbar { display: none; }
 body.phone .set-tabs button { flex: none; }
+
+/* connected folders: "On your Mac" in the left box, and Settings → General → Your files */
+.cfic { width: 19px; height: 15px; flex: none; overflow: visible; fill: none; stroke: var(--ink); stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.cfic path:first-child { fill: #fff; }
+.cfic circle { fill: var(--pink); stroke-width: 1.2; }
+.cfic path:last-child { stroke-width: 1.1; }
+body.dark .cfic path:first-child { fill: var(--surface-2); }
+.cf-side { margin-top: 12px; }
+.cf-label { display: flex; align-items: center; justify-content: space-between; margin: 0 6px 4px; min-height: 18px; }
+.cf-label:hover .f-btn { display: block; }
+.cf-label .f-btn svg, .cf-row .f-btn svg { width: 14px; height: 14px; }
+.cf-row { padding-left: 10px; }
+.cf-row.missing .fname, .cf-row.missing .cfic { opacity: .45; }
+.cf-row.missing small { color: #d6455d; font-weight: 700; }
+.cf-row:hover > small { display: inline; }
+.cf-first { margin-top: 10px; }
+.cf-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
+.cf-list[hidden] { display: none; }
+.cf-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 14px; background: var(--surface-2, #faf5fb); }
+.cf-item .cf-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.cf-item b { font: 700 13px/1.2 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cf-item small { font: 500 11.5px/1.3 var(--font); color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cf-item.missing b { opacity: .55; } .cf-item.missing small { color: #d6455d; }
+.cf-item .set-btn { padding: 7px 12px; font-size: 12px; }
+.cf-ask { margin: 2px 0 8px; padding: 14px 16px; border-radius: 16px; background: var(--blush); }
+.cf-ask[hidden], #cfAllRow[hidden], #homeBackRow[hidden] { display: none; }
+.cf-ask p { margin: 0 0 12px; font: 500 12.5px/1.5 var(--font); color: var(--ink); }
+
+/* file cards: one file from this computer (preview + name + what it is); folder cards: a connected folder's contents, live */
+.card.file .body { padding: 0; display: flex; flex-direction: column; }
+.card.file .fl-thumb { flex: 1; min-height: 0; margin: 8px 8px 0; border-radius: 12px; background: #f6f2f7; display: grid; place-items: center; overflow: hidden; position: relative; }
+.card.file .fl-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; box-sizing: border-box; object-fit: cover; object-position: top center; display: block; }
+.card.file .fl-thumb.icon { background: #faf7fb; }
+.card.file .fl-thumb:not(.fl-pic):not(.icon) img { object-fit: contain; object-position: center top; padding: 12px 16px 0; filter: drop-shadow(0 3px 8px rgba(80, 50, 90, .16)); }   /* a page (PDF, doc, slides) sits like a sheet of paper; pictures fill the frame */
+.card.file .fl-thumb.icon img { inset: 14% 19%; width: 62%; height: 72%; object-fit: contain; object-position: center; filter: drop-shadow(0 4px 8px rgba(80, 50, 90, .12)); }
+.card.file .fl-thumb.gone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 10px; text-align: center; background: var(--blush); }
+.fl-thumb.gone b, .fo-msg b { font: 700 13px/1.3 var(--font); color: var(--ink); }
+.fl-thumb.gone span, .fo-msg span { font: 500 12px/1.35 var(--font); color: var(--ink-soft); }
+.fl-find { margin-top: 6px; padding: 6px 12px; border: 0; border-radius: 99px; background: var(--ink); color: #fff; font: 700 12px/1 var(--font); cursor: pointer; }
+.fl-badge { display: inline-grid; place-items: center; min-width: 54px; height: 66px; padding: 0 8px; border-radius: 8px 18px 8px 8px; background: var(--fb, #e4dfe7); color: rgba(40, 30, 50, .72); font: 800 13px/1 var(--font); font-style: normal; letter-spacing: .04em; box-shadow: inset 0 -3px 0 rgba(0, 0, 0, .06); }
+.card.file .fl-meta { padding: 9px 14px 12px; min-width: 0; }
+.card.file .fl-meta b { display: block; font: 700 14px/1.25 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card.file .fl-meta span { display: block; margin-top: 3px; font: 500 12px/1.3 var(--font); color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card.file.tiny .fl-meta span { display: none; }
+.card.folder .body { padding: 0; display: flex; flex-direction: column; }
+.fo-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px 10px; border-bottom: 1.5px dashed var(--dot); min-width: 0; }
+.fo-head .cfic { width: 21px; height: 17px; }
+.fo-up { flex: none; width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: 8px; background: #f3eef5; color: var(--ink); cursor: pointer; }
+.fo-up:hover { background: var(--blush); }
+.fo-path { flex: 1; min-width: 0; display: flex; align-items: center; gap: 5px; overflow: hidden; white-space: nowrap; font: 700 14px/1.2 var(--font); }
+.fo-path > span { overflow: hidden; text-overflow: ellipsis; }
+.fo-path > span.up { flex: 0 1 auto; color: var(--ink-soft); font-weight: 600; cursor: pointer; }
+.fo-path > span.up:hover { color: var(--ink); text-decoration: underline; }
+.fo-path > span.here { flex: 0 1 auto; }
+.fo-path > i { font-style: normal; color: var(--ink-faint); flex: none; }
+.fo-head small { flex: none; font: 600 11.5px/1 var(--font); color: var(--ink-soft); }
+.fo-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 10px 10px 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); grid-auto-rows: max-content; gap: 6px 4px; align-content: start; }
+.fo-item { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 4px 6px; border-radius: 12px; cursor: default; min-width: 0; }
+.fo-item:hover { background: #f8f3f9; }
+.fo-item.on { background: var(--blush); }
+.fo-th { width: 64px; height: 56px; display: grid; place-items: center; }
+.fo-th img { max-width: 64px; max-height: 56px; border-radius: 6px; box-shadow: 0 2px 6px rgba(80, 50, 90, .14); display: block; }
+.fo-th.icon img { box-shadow: none; border-radius: 0; }
+.fo-th .fl-badge { min-width: 40px; height: 50px; padding: 0 5px; font-size: 10.5px; border-radius: 6px 13px 6px 6px; }
+.fo-dir { width: 54px; height: 44px; fill: #ffd3e5; stroke: #e98bb3; stroke-width: 1.6; stroke-linejoin: round; }
+.fo-dir path:last-child { fill: none; stroke-opacity: .5; }
+.fo-item span { width: 100%; text-align: center; font: 600 11.5px/1.25 var(--font); color: var(--ink); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
+.fo-more { grid-column: 1 / -1; text-align: center; padding: 8px; font: 600 12px/1.3 var(--font); color: var(--ink-soft); }
+.fo-msg { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 20px; text-align: center; }
+.fo-ghost { position: fixed; z-index: 9999; pointer-events: none; width: 92px; padding: 8px 4px 6px; border-radius: 14px; background: rgba(255, 255, 255, .94); box-shadow: 0 12px 30px rgba(80, 50, 90, .22); display: flex; flex-direction: column; align-items: center; gap: 6px; translate: -50% -60%; rotate: -4deg; }
+.fo-ghost span { font: 600 11px/1.2 var(--font); text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; color: #494848; }
+body.dark .card.file .fl-thumb, body.dark .card.file .fl-thumb.icon { background: var(--surface-2); }
+body.dark .fo-item:hover { background: var(--surface-2); } body.dark .fo-item.on { background: var(--blush); }
+body.dark .fo-up { background: var(--surface-2); }
+body.dark .fl-find { background: var(--pink); color: #2a1f2a; }
+
+.cf-side.cf-drop { outline: 2px dashed var(--pink-deep, #f27aa8); outline-offset: 4px; border-radius: 12px; background: var(--blush); }   /* a folder dragged over the left box: drop to connect */
+
+/* a web page or game: its card has a Play button that runs it on localhost */
+.card.file .fl-play { position: absolute; right: 16px; bottom: 64px; z-index: 2; padding: 7px 13px 7px 11px; border: 0; border-radius: 99px; background: var(--ink); color: #fff; font: 700 12.5px/1 var(--font); cursor: pointer; box-shadow: 0 6px 16px rgba(60, 30, 70, .22); transition: transform .15s ease; }
+.card.file .fl-play:hover { transform: scale(1.06); background: var(--pink-deep, #f27aa8); }
+body.dark .card.file .fl-play { background: var(--pink); color: #2a1f2a; }
+
+/* while Mochi photographs a screen she built: just the board, no panels, no glow */
+body.mochi-snap .side, body.mochi-snap #mochi, body.mochi-snap .dock, body.mochi-snap .tray, body.mochi-snap .top, body.mochi-snap #sideR, body.mochi-snap .keys, body.mochi-snap .selbar { visibility: hidden !important; }
+body.mochi-snap .just-made { animation: none !important; }
+
+.card.box .bx-vid { object-fit: contain; background: transparent; }   /* a looping animation from their files sits whole in its spot */

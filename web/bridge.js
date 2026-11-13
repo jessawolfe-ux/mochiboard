@@ -65,6 +65,10 @@
     // in a browser: print the doc in a hidden frame, and the browser's own "Save as PDF" does the rest
     async docPDF(html) { const f = document.createElement('iframe'); f.style.cssText = 'position:fixed;width:0;height:0;border:0;opacity:0'; document.body.appendChild(f);
       f.srcdoc = html.replace(/__WEB__\//g, location.href.replace(/[^/]*$/, '')); await new Promise(r => f.onload = r); await f.contentDocument.fonts?.ready; f.contentWindow.focus(); f.contentWindow.print(); setTimeout(() => f.remove(), 60000); return ''; },
+    async connected() { return []; }, async connectFolder() { throw new Error('Connecting folders works in the Mac app'); }, async connectAll() { throw new Error('Connecting your files works in the Mac app'); }, async connectPaths() { throw new Error('Connecting folders works in the Mac app'); }, async disconnectFolder() { return []; }, async revealConnected() {},
+    async listFolder() { throw new Error('Folders from your computer show up in the Mac and Windows apps'); }, async fileInfo() { return {}; }, async fileThumb() { throw new Error('no preview'); },
+    async openFile() { throw new Error('Opening files works in the Mac and Windows apps'); }, async serveFile() { throw new Error('Playing web pages works in the Mac and Windows apps'); }, async lookAt() { return []; }, async snapRect() { throw new Error('no photo'); }, async readImage() { throw new Error('Pictures from your files come in through the Mac and Windows apps'); }, async videoURL() { throw new Error('Videos from your files play in the Mac and Windows apps'); }, async revealFile() { throw new Error('Showing files works in the Mac and Windows apps'); }, async pickFiles() { return []; }, async watchPaths() { return false; },
+    async boardsHome() { return null; }, async moveBoards() { throw new Error('Choosing where boards live works in the Mac and Windows apps'); }, async resetBoardsHome() { return null; },
     async reveal() { alert('Your boards live in this browser while you try Mochiboard here. In the Mac app this opens their folder.'); },
     async linkShot() { return ''; },   // the browser can't render other sites itself; the canvas asks a screenshot service instead
     async linkPreview(url) { let host = url; try { host = new URL(url).hostname.replace(/^www\./, ''); } catch (e) {} return { title: host, desc: url, image: '' }; },
@@ -87,6 +91,12 @@
     native: true, platform,
     list: () => call('list'), load: id => call('load', { id }), save: board => call('save', { board }), remove: id => call('remove', { id }),
     folders: () => call('folders'), saveFolders: folders => call('saveFolders', { folders }),
+    // folders on this computer that someone connected (only ones they picked)
+    connected: () => call('connected'), connectFolder: () => call('connectFolder'), connectAll: () => call('connectAll'), connectPaths: paths => call('connectPaths', { paths }), disconnectFolder: id => call('disconnectFolder', { id }), revealConnected: id => call('revealConnected', { id }),
+    // folder cards and file cards (read-only), and where the boards are saved
+    listFolder: path => call('listFolder', { path }), fileInfo: paths => call('fileInfo', { paths }), fileThumb: (path, size) => call('fileThumb', { path, size }),
+    openFile: path => call('openFile', { path }), serveFile: (path, root) => call('serveFile', { path, root }), lookAt: paths => call('lookAt', { paths }), snapRect: o => call('snapRect', o), readImage: path => call('readImage', { path }), videoURL: path => call('videoURL', { path }), revealFile: path => call('revealFile', { path }), pickFiles: (o = {}) => call('pickFiles', o), watchPaths: paths => call('watchPaths', { paths }),
+    boardsHome: () => call('boardsHome'), moveBoards: () => call('moveBoards'), resetBoardsHome: () => call('resetBoardsHome'),
     usage: () => call('usage'), resetUsage: () => call('resetUsage'), version: () => call('version'),
     linkPreview: url => call('linkPreview', { url }), linkShot: url => call('linkShot', { url }), rewrite: (text, how, title, around) => call('rewrite', { text, how, title, around }), docPDF: (html, name, paper) => call('docPDF', { html, name, paper }), saveFile: (data, name, ext) => call('saveFile', { data, name, ext }), ask: (prompt, board, confirmed = false, opts = {}) => call('ask', { prompt, board, confirmed, ...opts }),
     saveMedia: (blob, onProgress) => saveMediaNative(blob, onProgress), mediaURL: async src => mediaAddr(src),

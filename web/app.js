@@ -59,7 +59,7 @@
       tray: ['call the printer', 'idea: animated logo', 'that font from the cafe menu', 'reply to Sam', 'moodboard for spring'].map(t => card('note', { text: t })) }),
   };
   function card(type, o = {}) {
-    const size = { note: [220, 140], title: [320, 50], image: [260, 220], link: [260, 210], todo: [240, 180], swatch: [120, 150], coll: [288, 200], doc: [240, 52], canvas: [260, 180], shape: [160, 160], stamp: [56, 56], audio: [290, 150], video: [360, 246], ink: [10, 10], frame: [393, 852], box: [160, 100], text: [220, 24], icon: [28, 28], font: [300, 210], table: [360, 60] }[type] || [220, 140];
+    const size = { note: [220, 140], title: [320, 50], image: [260, 220], link: [260, 210], todo: [240, 180], swatch: [120, 150], coll: [288, 200], doc: [240, 52], canvas: [260, 180], shape: [160, 160], stamp: [56, 56], audio: [290, 150], video: [360, 246], ink: [10, 10], frame: [393, 852], box: [160, 100], text: [220, 24], icon: [28, 28], font: [300, 210], table: [360, 60], file: [230, 214], folder: [460, 380] }[type] || [220, 140];
     return Object.assign({ id: uid(), type, x: 0, y: 0, w: size[0], h: size[1], r: type === 'title' ? 0 : tilt(), color: 'white' }, o);
   }
   function newBoard(name = 'Untitled board', tpl) {
@@ -307,19 +307,363 @@
     dropZone(wrap.querySelector('.node-head'), 'folder', id => { putFolder(id, null, p.id); p.open = true; });
     return wrap;
   }
+  // ---------- connected folders: folders on this computer that someone picked in the folder picker. Nothing else is ever looked at,
+  // and disconnecting only forgets the folder (the files never move). Listed under "On your Mac" in the left box and in Settings → General ----------
+  let connected = [];
+  const CFIC = '<svg class="cfic" viewBox="0 0 20 16" aria-hidden="true"><path d="M1.5 3.2A1.6 1.6 0 0 1 3.1 1.6h3.3c.5 0 .9.2 1.2.6l.9 1.1h5.4a1.6 1.6 0 0 1 1.6 1.6v6.6a1.6 1.6 0 0 1-1.6 1.6H3.1a1.6 1.6 0 0 1-1.6-1.6z"/><circle cx="15" cy="11" r="4.2"/><path d="M13.6 12.4l2.8-2.8M13 10.8l-.5.5a1 1 0 0 0 1.4 1.4l.5-.5M16.9 11.2l.5-.5a1 1 0 0 0-1.4-1.4l-.5.5"/></svg>';
+  // the left box asks often (after every save); the folder counts underneath (a whole home folder for "All my files") are re-read at most every 20 s
+  let connectedAt = 0;
+  async function connectedFresh() { if (Date.now() - connectedAt < 20000) return connected; connectedAt = Date.now(); return loadConnected(); }
+  async function loadConnected() { try { connected = (await MB.connected()) || []; } catch (e) { connected = []; } return connected; }
+  const cfCount = f => f.missing ? 'Can’t find it' : f.count === 1 ? '1 thing' : `${f.count} things`;
+  async function connectFolder() {
+    try {
+      const r = await MB.connectFolder(); connected = r.folders || []; renderConnected();
+      connectedSaid(r.added); return r.added || [];
+    } catch (e) { say(e.message, 5000); return []; }
+  }
+  async function connectPaths(paths) { try { const r = await MB.connectPaths(paths); connected = r.folders || []; renderConnected(); connectedSaid(r.added); return r.added || []; } catch (e) { say(e.message, 5000); return []; } }
+  // the left box takes folders too: drop one from Finder on it to connect it (no card on the board)
+  function connectDropZone(el) {
+    el.addEventListener('dragover', e => { if (![...(e.dataTransfer?.types || [])].includes('Files')) return; e.preventDefault(); el.classList.add('cf-drop'); });
+    el.addEventListener('dragleave', e => { if (!el.contains(e.relatedTarget)) el.classList.remove('cf-drop'); });
+    el.addEventListener('drop', async e => { if (![...(e.dataTransfer?.types || [])].includes('Files')) return; e.preventDefault(); e.stopPropagation(); el.classList.remove('cf-drop');
+      const paths = window.__dropPaths || []; window.__dropPaths = null; if (!paths.length) return;
+      let info = {}; try { info = (await MB.fileInfo(paths)) || {}; } catch (e2) {} const dirs = paths.filter(p => info[p]?.dir);
+      if (!dirs.length) return say('Drop a folder here to connect it. Files go on the board ✦', 5000); connectPaths(dirs); });
+  }
+  const connectedSaid = added => { if (!added?.length) return;
+    say(added.length === 1 ? `${added[0] === 'All my files' ? 'All your files are' : `“${added[0]}” is`} connected ✦ Find ${added[0] === 'All my files' ? 'them' : 'it'} under On your Mac, in the left box.` : `${added.length} folders are connected ✦ They’re under On your Mac, in the left box.`, 5000); };
+  // "All my files" is a lot to hand over, so it always asks once first (in Settings → General → Your files)
+  function askAllFiles() { $('gearBtn').click(); setTab('general'); $('cfAsk').hidden = false; setTimeout(() => $('cfAsk').scrollIntoView({ block: 'center', behavior: 'smooth' }), 120); }
+  async function connectAll() { $('cfAsk').hidden = true; try { const r = await MB.connectAll(); connected = r.folders || []; renderConnected(); connectedSaid(r.added); } catch (e) { say(e.message, 5000); } }
+  async function disconnectFolder(f) { connected = (await MB.disconnectFolder(f.id)) || []; renderConnected(); chirp(`Disconnected “${f.name}”. Your files are right where they were ✦`, 4000); }
+  async function openConnected(f) { try { await MB.revealConnected(f.id); } catch (e) { say(e.message, 5000); await loadConnected(); renderConnected(); } }
+  function connectedMenu(e, f) {
+    e.preventDefault(); e.stopPropagation(); $('rowMenu')?.remove();
+    const m = document.createElement('div'); m.id = 'rowMenu'; m.className = 'row-menu'; m.style.left = e.clientX + 'px'; m.style.top = e.clientY + 'px';
+    m.innerHTML = `${f.missing || !board ? '' : '<button data-m="board">Show on the board</button>'}${f.missing ? '' : '<button data-m="open">Show in Finder</button>'}<button data-m="add">Connect another folder</button>${connected.some(x => x.all) ? '' : '<button data-m="all">Connect all my files…</button>'}<span class="rm-sep"></span><button data-m="off" class="danger">Disconnect</button>`;
+    document.body.appendChild(m); fitMenu(m);
+    m.onclick = ev => { const a = ev.target.closest('[data-m]')?.dataset.m; if (!a) return; m.remove();
+      if (a === 'board') putFolderCard(f, centerWorld()); if (a === 'open') openConnected(f); if (a === 'add') connectFolder(); if (a === 'all') askAllFiles(); if (a === 'off') disconnectFolder(f); };
+    setTimeout(() => addEventListener('pointerdown', function off(ev) { if (!m.contains(ev.target)) { m.remove(); removeEventListener('pointerdown', off, true); } }, true));
+  }
+  // the left box: a quiet "On your Mac" group, or one small link to connect the first folder
+  function connectedSide() {
+    const sec = document.createElement('div'); sec.className = 'cf-side'; sec.id = 'cfSide'; if (MB.native) connectDropZone(sec);
+    if (!connected.length) { sec.innerHTML = '<button class="arch-link cf-first" title="Or drag a folder here from Finder">+ Connect a folder from your Mac</button>'; sec.firstChild.onclick = connectFolder; return sec; }
+    sec.innerHTML = `<div class="cf-label"><span class="label">On your Mac</span><button class="f-btn" title="Connect a folder">${FBTN.add}</button></div>`;
+    sec.querySelector('.f-btn').onclick = connectFolder;
+    connected.forEach(f => {
+      const r = document.createElement('div'); r.className = 'node-head cf-row' + (f.missing ? ' missing' : ''); r.title = f.missing ? `I can’t find this folder (${f.path}). Was it moved or renamed?` : `${f.all ? 'Everything in your home folder' : f.path}\nClick to open it in Finder, or drag it onto the board to see inside`;
+      r.innerHTML = `${CFIC}<span class="fname"></span><small>${f.missing ? '?' : f.count}</small>`; r.querySelector('.fname').textContent = f.name;
+      r.onclick = () => openConnected(f); r.oncontextmenu = e => connectedMenu(e, f);
+      if (!f.missing) { r.draggable = true; r.ondragstart = ev => { ev.dataTransfer.setData('mb/cfolder', f.id); ev.dataTransfer.effectAllowed = 'copy'; }; }   // drag it onto the board to see inside
+      sec.appendChild(r);
+    });
+    return sec;
+  }
+  // Settings → General → Your files
+  function renderConnected() {
+    const side = $('cfSide'); if (side) side.replaceWith(connectedSide());
+    const list = $('cfList'); if (!list) return;
+    $('cfAllRow').hidden = connected.some(f => f.all); if ($('cfAllRow').hidden) $('cfAsk').hidden = true;
+    list.innerHTML = ''; list.hidden = !connected.length;
+    connected.forEach(f => {
+      const r = document.createElement('div'); r.className = 'cf-item' + (f.missing ? ' missing' : '');
+      r.innerHTML = `${CFIC}<div class="cf-text"><b></b><small></small></div><div class="set-btns">${f.missing ? '' : '<button class="set-btn" data-a="open">Show in Finder</button>'}<button class="set-btn" data-a="off">Disconnect</button></div>`;
+      r.querySelector('b').textContent = f.name; r.querySelector('small').textContent = `${f.all ? 'Everything in your home folder' : f.path} · ${cfCount(f)}${f.missing ? '. Was it moved or renamed?' : ''}`;
+      r.onclick = e => { const a = e.target.closest('[data-a]')?.dataset.a; if (a === 'open') openConnected(f); if (a === 'off') disconnectFolder(f); };
+      list.appendChild(r);
+    });
+  }
+  // ---------- file cards and folder cards: things on this computer, shown live on the board. Read-only: the board shows and opens files, it never changes them.
+  // A file card points at one file (dropped in from Finder, picked, or dragged out of a folder card). A folder card shows a connected folder's contents and keeps up as they change ----------
+  const FDATA = new Map(), FINFO = new Map(), THUMBS = new Map();   // folder listings (by card), file details (by path), previews (by path + when it last changed)
+  const FINDER = MB.platform === 'windows' ? 'File Explorer' : 'Finder';
+  const pathSep = p => /\\/.test(p) && !/\//.test(p) ? '\\' : '/';
+  const joinP = (a, b) => b ? String(a).replace(/[\\/]+$/, '') + pathSep(a) + b : a;
+  const baseName = p => String(p || '').split(/[\\/]/).filter(Boolean).pop() || String(p || '');
+  const extOfP = p => { const n = baseName(p), i = n.lastIndexOf('.'); return i > 0 ? n.slice(i + 1).toLowerCase() : ''; };
+  const parentP = p => String(p).replace(/[\\/][^\\/]*[\\/]?$/, '') || p;
+  const dirOf = c => joinP(c.path, c.sub || '');
+  const fsize = n => !n ? '' : n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : n < 1073741824 ? `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MB` : `${(n / 1073741824).toFixed(1)} GB`;
+  const fago = t => { if (!t) return ''; const d = (Date.now() / 1000 - t) / 86400; return d < 1 / 24 ? 'edited just now' : d < 1 ? `edited ${Math.round(d * 24)}h ago` : d < 2 ? 'edited yesterday' : d < 30 ? `edited ${Math.round(d)} days ago` : 'edited ' + new Date(t * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(d > 300 ? { year: 'numeric' } : {}) }); };
+  const FKIND = { pdf: 'PDF', jpg: 'JPEG', jpeg: 'JPEG', md: 'Markdown', txt: 'Text', doc: 'Word', docx: 'Word', xls: 'Excel', xlsx: 'Excel', ppt: 'PowerPoint', pptx: 'PowerPoint', key: 'Keynote', fig: 'Figma', psd: 'Photoshop', ai: 'Illustrator', mov: 'Movie', mp4: 'Video', mp3: 'Audio', m4a: 'Audio', wav: 'Audio', zip: 'Zip', csv: 'CSV' };
+  // a little colored tag for the kind of file, so a wall of files still reads at a glance
+  const FGROUP = [[/^(pdf|docx?|pages|txt|md|rtf|odt)$/, '#ffc8a6'], [/^(png|jpe?g|gif|webp|heic|svg|tiff?|bmp)$/, '#a8e6c3'], [/^(fig|sketch|psd|ai|xd|afdesign|indd)$/, '#cdb8ff'],
+    [/^(xlsx?|numbers|csv|tsv)$/, '#b9ecd0'], [/^(mov|mp4|m4v|webm|mp3|m4a|wav|aiff?)$/, '#aed3ff'], [/^(key|pptx?)$/, '#f8e08a'], [/^(js|ts|jsx|tsx|py|swift|rs|html?|css|json|sh)$/, '#f6e7a8']];
+  const fTint = ext => (FGROUP.find(g => g[0].test(ext || '')) || [0, '#e4dfe7'])[1];
+  const fBadge = ext => `<i class="fl-badge" style="--fb:${fTint(ext)}">${esc((ext || 'file').slice(0, 4).toUpperCase())}</i>`;
+  const FOLDIC = '<svg class="fo-dir" viewBox="0 0 40 32" aria-hidden="true"><path d="M3 7.5A3.5 3.5 0 0 1 6.5 4h8.3c.9 0 1.7.4 2.3 1.1L19.5 8H33.5A3.5 3.5 0 0 1 37 11.5v13A3.5 3.5 0 0 1 33.5 28h-27A3.5 3.5 0 0 1 3 24.5z"/><path d="M3 12h34"/></svg>';
+  const fileLine = c => { const inf = FINFO.get(c.path) || {}; return [c.kind && c.kind.length < 22 ? c.kind : FKIND[c.ext] || (c.ext ? c.ext.toUpperCase() : 'File'), fsize(inf.size ?? c.size), fago(inf.mod ?? c.mod)].filter(Boolean).join(' · '); };
+  function fileInner(c) {
+    const inf = FINFO.get(c.path), gone = inf && !inf.exists, th = inf && THUMBS.get(c.path + '|' + (inf.mod || 0));
+    return `<div class="fl-thumb${th?.icon ? ' icon' : /^(png|jpe?g|gif|webp|heic|tiff?|bmp|svg|mov|mp4|m4v)$/.test(c.ext || '') ? ' fl-pic' : ''}${gone ? ' gone' : ''}">${gone ? `<b>I can’t find this file</b><span>Was it moved or renamed?</span><button class="fl-find" data-act="fl-find">Find it…</button>` : th?.src ? `<img src="${th.src}" alt="" draggable="false">` : fBadge(c.ext)}</div>`
+      + (isWeb(c) && !gone && MB.native ? `<button class="fl-play" data-act="fl-play" title="Play it on localhost">▶ Play</button>` : '')
+      + `<div class="fl-meta"><b>${esc(c.name || baseName(c.path))}</b><span>${esc(gone ? baseName(parentP(c.path)) : isWeb(c) && c.served ? c.served.replace(/^https?:\/\//, '').replace(/\/$/, '') + ' · ' + fileLine(c).split(' · ').slice(1).join(' · ') : fileLine(c))}</span></div>`;
+  }
+  function folderInner(c) {
+    const d = FDATA.get(c.id), sep = pathSep(c.path), crumbs = [c.name || baseName(c.path), ...(c.sub ? c.sub.split(/[\\/]/) : [])], ready = d && d.items;
+    const head = `<div class="fo-head">${c.sub ? '<button class="fo-up" data-act="fo-up" title="Back" aria-label="Back"><svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 4.5 7 10l5.5 5.5"/></svg></button>' : CFIC}`
+      + `<span class="fo-path">${crumbs.map((n, i) => `<span class="${i === crumbs.length - 1 ? 'here' : 'up'}"${i < crumbs.length - 1 ? ` data-act="fo-crumb" data-i="${i}"` : ''}>${esc(n)}</span>`).join('<i>›</i>')}</span>`
+      + `<small>${ready && !d.missing && !d.err ? (d.total === 1 ? '1 thing' : `${d.total} things`) : ''}</small></div>`;
+    if (!ready) return head + '<div class="fo-msg"><span>Looking…</span></div>';
+    if (d.err) return head + `<div class="fo-msg"><b>${esc(d.err)}</b><button class="fl-find" data-act="fo-connect">Connect a folder…</button></div>`;
+    if (d.missing) return head + `<div class="fo-msg"><b>I can’t find this folder</b><span>Was it moved or renamed?</span></div>`;
+    if (!d.items.length) return head + '<div class="fo-msg"><span>Nothing in here yet</span></div>';
+    void sep;
+    return head + `<div class="fo-list">${d.items.map((it, i) => { const th = !it.dir && THUMBS.get(it.path + '|' + (it.mod || 0));
+      return `<div class="fo-item${it.dir ? ' dir' : ''}" data-act="fo-item" data-i="${i}" title="${esc(it.name)}${it.dir ? '' : '\n' + [FKIND[it.ext] || (it.ext || 'file').toUpperCase(), fsize(it.size)].filter(Boolean).join(' · ')}"><div class="fo-th${th?.icon ? ' icon' : ''}"${it.dir || th ? '' : ` data-th="${i}"`}>${it.dir ? FOLDIC : th?.src ? `<img src="${th.src}" alt="" draggable="false">` : fBadge(it.ext)}</div><span>${esc(it.name)}</span></div>`; }).join('')}`
+      + `${d.total > d.items.length ? `<div class="fo-more">+ ${d.total - d.items.length} more in ${FINDER}</div>` : ''}</div>`;
+  }
+  // previews come from the computer itself (Quick Look on a Mac), a few at a time, and are kept only in memory so boards stay small
+  const thumbQ = [], thumbWait = new Map(); let thumbBusy = 0;
+  function thumbFor(path, mod, size) {
+    const k = path + '|' + (mod || 0); if (THUMBS.has(k)) return Promise.resolve(THUMBS.get(k)); if (thumbWait.has(k)) return thumbWait.get(k);
+    if (MB.platform !== 'mac' || !MB.native) return Promise.resolve(null);
+    const pr = new Promise(res => { thumbQ.push(async () => { let t = null; try { t = await MB.fileThumb(path, size); } catch (e) {} THUMBS.set(k, t); thumbWait.delete(k); res(t); }); pumpThumbs(); });
+    thumbWait.set(k, pr); return pr;
+  }
+  function pumpThumbs() { while (thumbBusy < 4 && thumbQ.length) { const job = thumbQ.shift(); thumbBusy++; job().finally(() => { thumbBusy--; pumpThumbs(); }); } }
+  function thumbsIn(c, el) {
+    const d = FDATA.get(c.id); if (!d?.items) return;
+    [...el.querySelectorAll('.fo-th[data-th]')].slice(0, 160).forEach(slot => { const it = d.items[+slot.dataset.th]; if (!it) return; slot.removeAttribute('data-th');
+      thumbFor(it.path, it.mod, 120).then(t => { if (!t?.src || !slot.isConnected) return; slot.classList.toggle('icon', !!t.icon); slot.innerHTML = `<img src="${t.src}" alt="" draggable="false">`; }); });
+  }
+  function hydrateFiles(c, el) {
+    if (c.type === 'folder') { const d = FDATA.get(c.id); if (!d || d.dir !== dirOf(c)) loadFolder(c); else thumbsIn(c, el); return; }
+    const inf = FINFO.get(c.path); if (!inf) return void refreshInfo([c.path]);
+    if (inf.exists) thumbFor(c.path, inf.mod, 220).then(t => { if (t?.src && el.isConnected && !el.querySelector('.fl-thumb img')) renderCard(c); });
+  }
+  async function loadFolder(c) {
+    const dir = dirOf(c), old = FDATA.get(c.id); if (old?.loading && old.dir === dir) return;
+    FDATA.set(c.id, old && old.dir === dir ? { ...old, loading: true } : { dir, loading: true });
+    let r; try { r = { dir, ...(await MB.listFolder(dir)) }; } catch (e) { r = { dir, err: e.message, items: [] }; }
+    const sig = x => x && JSON.stringify([x.err, x.missing, x.total, (x.items || []).map(i => [i.name, i.mod, i.size])]);
+    if (dirOf(c) !== dir) return;   // they moved on to another folder while this one loaded
+    FDATA.set(c.id, r); if (board && byId(c.id) && sig(r) !== sig(old)) renderCard(c);
+  }
+  async function refreshInfo(paths) {
+    paths = [...new Set(paths)].filter(Boolean); if (!paths.length || !board) return; let r = {}; try { r = (await MB.fileInfo(paths)) || {}; } catch (e) {}
+    let dirty = false;
+    for (const p of paths) {
+      const inf = r[p] || { exists: false }, old = FINFO.get(p); FINFO.set(p, inf);
+      board.cards.filter(c => c.type === 'file' && c.path === p).forEach(c => {
+        if (inf.exists && (c.size !== inf.size || c.mod !== inf.mod || (inf.kind && c.kind !== inf.kind))) { c.size = inf.size; c.mod = inf.mod; if (inf.kind) c.kind = inf.kind; dirty = true; }
+        if (!old || old.exists !== inf.exists || old.mod !== inf.mod) renderCard(c);
+      });
+    }
+    if (dirty) { clearTimeout(saveT); saveT = setTimeout(async () => { if (board) { board.view = view; await MB.save(board); } }, 600); }   // just the details, no undo step
+  }
+  // live: the app watches the folders on the board and says when something in them changes (Windows looks again every few seconds instead)
+  function watchedPaths() { const s = new Set(); (board?.cards || []).forEach(c => { if (c.type === 'folder' && c.path) s.add(dirOf(c)); if (c.type === 'file' && c.path) s.add(parentP(c.path)); }); return [...s]; }
+  let watchT = 0; function watchSoon() { if (!MB.native) return; clearTimeout(watchT); watchT = setTimeout(() => MB.watchPaths(watchedPaths()).catch(() => {}), 250); }
+  window.__pathsChanged = paths => { if (!board) return; const set = new Set(paths);
+    board.cards.forEach(c => { if (c.type === 'folder' && set.has(dirOf(c))) loadFolder(c); });
+    refreshInfo(board.cards.filter(c => c.type === 'file' && set.has(parentP(c.path))).map(c => c.path)); };
+  function refreshAllFiles() { if (!board || !MB.native) return; board.cards.forEach(c => { if (c.type === 'folder') loadFolder(c); }); refreshInfo(board.cards.filter(c => c.type === 'file').map(c => c.path)); }
+  addEventListener('focus', refreshAllFiles);
+  if (MB.native && MB.platform !== 'mac') setInterval(() => { if (document.visibilityState === 'visible' && board?.cards.some(c => c.type === 'file' || c.type === 'folder')) refreshAllFiles(); }, 6000);
+  // making them
+  const fileCard = (path, x, y) => card('file', { path, name: baseName(path), ext: extOfP(path), x, y });
+  const rootName = path => connected.find(f => f.abs === path)?.name;
+  const folderCard = (path, x, y, name) => card('folder', { path, name: name || rootName(path) || baseName(path), x, y, r: 0 });
+  function putFiles(list, at) {   // list: [{path, dir}]
+    if (!board || !list.length) return; remember(); const made = [];
+    // a few files land side by side in tidy rows (four across), starting where they were dropped
+    const cs = list.map(it => it.dir ? folderCard(it.path, 0, 0) : fileCard(it.path, 0, 0)), cols = Math.min(4, cs.length), gap = 26;
+    const rowW = cs.slice(0, cols).reduce((a, c) => a + c.w, 0) + gap * (cols - 1); let x = at.x - (cs.length > 1 ? rowW / 2 : cs[0].w / 2), y = at.y - cs[0].h / 2, rowH = 0;
+    cs.forEach((c, i) => { if (i && i % cols === 0) { x = at.x - rowW / 2; y += rowH + gap; rowH = 0; } c.x = Math.round(x); c.y = Math.round(y); x += c.w + gap; rowH = Math.max(rowH, c.h); addCard(c); made.push(c.id); });
+    selectOnly(made); watchSoon();
+  }
+  function putFolderCard(f, at) { if (!board || f.missing) return; const c = folderCard(f.abs, 0, 0, f.name); c.x = at.x - c.w / 2; c.y = at.y - c.h / 2; remember(); addCard(c); selectOnly([c.id]); watchSoon(); }
+  async function pickPut(at, folders = false) {
+    let ps = []; try { ps = await MB.pickFiles({ folders }); } catch (e) { return say(e.message, 5000); } if (!ps?.length) return;
+    if (folders) { const inside = ps.filter(p => connected.some(f => !f.missing && (p === f.abs || p.startsWith(f.abs.replace(/[\\/]+$/, '') + pathSep(f.abs)))));
+      if (inside.length < ps.length) say(`To show a folder on the board, connect it first (Settings → General → Your files). Then it stays live ✦`, 7000);
+      return putFiles(inside.map(path => ({ path, dir: true })), at); }
+    putFiles(ps.map(path => ({ path, dir: false })), at);
+  }
+  // files dropped in from Finder: the app passes along where they really are; pictures and videos still come in as pictures and videos
+  async function dropFiles(files, at) {
+    const paths = window.__dropPaths || []; window.__dropPaths = null;
+    const found = files.map(f => paths.find(p => baseName(p) === f.name)).filter(Boolean);
+    if (!found.length) return say(MB.native ? 'Drop files from your computer here, or right-click the board → Put a file here…' : 'Files from your computer can go on boards in the Mac and Windows apps ✦', 6000);
+    let info = {}; try { info = (await MB.fileInfo(found)) || {}; } catch (e) {}
+    // a folder dragged in connects by itself: dragging it here is the same as picking it in the folder picker
+    const outside = found.filter(p => info[p]?.dir && !inConnected(p)); if (outside.length) await connectPaths(outside);
+    found.forEach(p => FINFO.set(p, info[p] || { exists: true }));
+    putFiles(found.map(p => ({ path: p, dir: !!info[p]?.dir })), at);
+  }
+  // web pages and games (.html): Mochiboard runs their folder on localhost and opens them in the browser, no Terminal needed. Same folder, same address every time
+  const isWeb = c => /^html?$/.test(c.ext || extOfP(c.path));
+  const SERVED = new Map();
+  async function webURL(c) { const u = await MB.serveFile(c.path, c.root || ''); SERVED.set(c.path, u); return u; }
+  // Play only ever shares folders they connected; a page somewhere else gets a one-tap Connect, then plays
+  function needsConnect(c, then) {
+    if (inConnected(c.path)) return false; const folder = parentP(c.path);
+    say(`To play it, Mochiboard needs to see “${baseName(folder)}”. It only shares it with this Mac, and only while Mochiboard is open ✦`, 0,
+      [{ label: `Connect “${baseName(folder)}” ✦`, run: async () => { await connectPaths([folder]); if (inConnected(c.path)) then(c); } }, { label: 'Not now', ghost: true, run: () => {} }]);
+    return true;
+  }
+  async function playFile(c) {
+    if (needsConnect(c, playFile)) return;
+    try { const u = await webURL(c); await MB.openURL(u); const card = c.id && byId(c.id); if (card && !card.served) { card.served = u.replace(/\/[^/]*$/, '/'); renderCard(card); save(); } }   // an item inside a folder card isn't a card of its own
+    catch (e) { say(e.message, 5000); if (c.id) refreshInfo([c.path]); }
+  }
+  async function copyWebURL(c) { if (needsConnect(c, copyWebURL)) return; try { const u = await webURL(c); await navigator.clipboard.writeText(u); chirp(`Copied ${u} ✦ It works while Mochiboard is open.`, 5000); } catch (e) { say(e.message, 5000); } }
+  async function openFileCard(c) { if (isWeb(c) && MB.native) return playFile(c); try { await MB.openFile(c.path); } catch (e) { say(e.message, 5000); refreshInfo([c.path]); } }
+  async function findFile(c) {
+    let ps = []; try { ps = await MB.pickFiles({ start: parentP(c.path) }); } catch (e) { return; } if (!ps?.[0]) return;
+    remember(); c.path = ps[0]; c.name = baseName(ps[0]); c.ext = extOfP(ps[0]); delete c.kind; FINFO.delete(c.path); renderCard(c); save(); watchSoon();
+  }
+  const goSub = (c, sub) => { c.sub = sub; renderCard(c); save(); watchSoon(); };
+  let foDragged = 0;
+  function fileAct(c, act, e, el) {
+    if (act === 'fl-find') return findFile(c);
+    if (act === 'fl-play') return playFile(c);
+    if (act === 'fo-connect') return connectFolder();
+    const parts = (c.sub || '').split(/[\\/]/).filter(Boolean), sep = pathSep(c.path);
+    if (act === 'fo-up') return goSub(c, parts.slice(0, -1).join(sep));
+    if (act === 'fo-crumb') return goSub(c, parts.slice(0, +e.target.closest('[data-i]').dataset.i).join(sep));
+    if (act !== 'fo-item' || Date.now() - foDragged < 350) return;
+    const it = e.target.closest('.fo-item'), item = FDATA.get(c.id)?.items?.[+it.dataset.i]; if (!item) return;
+    if (!sel.has(c.id)) selectOnly([c.id]);
+    const now = Date.now(), again = fileAct.last === item.path && now - fileAct.t < 450; fileAct.last = again ? null : item.path; fileAct.t = now;
+    el.querySelectorAll('.fo-item.on').forEach(x => x.classList.remove('on')); el.querySelector(`.fo-item[data-i="${it.dataset.i}"]`)?.classList.add('on');
+    if (!again) return;
+    if (item.dir) goSub(c, [...parts, item.name].join(sep)); else if (/^html?$/.test(item.ext) && MB.native) playFile({ path: item.path, ext: item.ext, root: c.path }); else MB.openFile(item.path).catch(err => say(err.message, 5000));
+  }
+  // drag a file (or folder) out of a folder card onto the board: it becomes its own card
+  function foDragStart(e) {
+    const it = e.target.closest('.fo-item'); if (!it || e.button !== 0) return; const el = it.closest('.card'), c = byId(el?.dataset.id), item = c && FDATA.get(c.id)?.items?.[+it.dataset.i]; if (!item) return;
+    const sx = e.clientX, sy = e.clientY; let ghost = null;
+    const move = ev => { if (!ghost && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return;
+      if (!ghost) { ghost = document.createElement('div'); ghost.className = 'fo-ghost'; ghost.innerHTML = it.innerHTML; document.body.appendChild(ghost); }
+      ghost.style.left = ev.clientX + 'px'; ghost.style.top = ev.clientY + 'px'; };
+    const up = ev => { removeEventListener('pointermove', move, true); removeEventListener('pointerup', up, true); if (!ghost) return; ghost.remove(); foDragged = Date.now();
+      const over = document.elementFromPoint(ev.clientX, ev.clientY);
+      if (!over || !stage.contains(over) || over.closest(`[data-id="${c.id}"], .tools, .tray, .side, .top, .mochi, .dock, .selbar`)) return;
+      const w = toWorld(ev.clientX, ev.clientY); if (!item.dir) FINFO.set(item.path, { exists: true, size: item.size, mod: item.mod });
+      putFiles([{ path: item.path, dir: item.dir }], w); };
+    addEventListener('pointermove', move, true); addEventListener('pointerup', up, true);
+  }
+  function fileMenu(cs) {
+    if (cs.length !== 1 || !['file', 'folder'].includes(cs[0].type)) return []; const c = cs[0], f = c.type === 'folder';
+    return [
+      { label: f ? `Open in ${FINDER}` : isWeb(c) ? '▶ Play on localhost' : 'Open', run: () => f ? MB.openFile(dirOf(c)).catch(e => say(e.message, 5000)) : openFileCard(c) },
+      ...(!f && isWeb(c) ? [{ label: 'Copy the localhost link', run: () => copyWebURL(c) }, { label: 'Open the file itself', run: () => MB.openFile(c.path).catch(e => say(e.message, 5000)) }] : []),
+      ...(!f ? [{ label: `Show in ${FINDER}`, run: () => MB.revealFile(c.path).catch(e => say(e.message, 5000)) }, { label: 'Point it at another file…', run: () => findFile(c) }] : []),
+      ...(f && c.sub ? [{ label: `Back to “${esc(c.name)}”`, run: () => goSub(c, '') }] : []),
+      ...(settings.ai ? [{ label: '✦ Ask Mochi about this', run: () => askAbout(c) }] : []), '-'];
+  }
+  const inConnected = p => connected.some(f => !f.missing && (p === f.abs || String(p).startsWith(String(f.abs).replace(/[\\/]+$/, '') + pathSep(f.abs))));
+  // ---------- Mochi changes settings: she gets the list of what can change (read from the Settings window itself, so it never goes stale),
+  // and changes go through the same switches a person would click. Every change comes with an Undo ----------
+  function settingsCatalog() {
+    const label = el => { const r = el.closest('.set-row, label, section'); return [r?.querySelector('b')?.textContent.trim(), r?.querySelector('small')?.textContent.trim()].filter(Boolean).join(': ').slice(0, 150); };
+    const seen = new Set(), out = [];
+    document.querySelectorAll('[data-set]').forEach(t => { const k = t.dataset.set; if (seen.has(k) || (t.closest('.native-only') && !MB.native)) return; seen.add(k); out.push({ key: k, what: label(t), now: !!settings[k], values: 'true | false' }); });
+    document.querySelectorAll('[data-seg]').forEach(g => { const k = g.dataset.seg; if (seen.has(k)) return; seen.add(k); out.push({ key: k, what: label(g), now: settings[k], values: [...g.querySelectorAll('[data-v]')].map(b => `${b.dataset.v} (${b.textContent.trim()})`).join(' | ') }); });
+    out.push({ key: 'mochi', what: 'Mochi’s color', now: settings.mochi, values: Object.keys(MOCHI_COLORS).join(' | ') },
+      { key: 'noteColor', what: 'Color of new notes', now: settings.noteColor, values: ['random', ...COLOR_NAMES].join(' | ') },
+      { key: 'mochiName', what: 'Mochi’s name ("" goes back to Mochi)', now: settings.mochiName || '', values: 'a short name' },
+      { key: 'name', what: 'The person’s own name (it rides along on their cursor)', now: settings.name || '', values: 'a short name' },
+      { key: 'cursor', what: 'Their cursor color', now: settings.cursor, values: '#rrggbb' });
+    return out;
+  }
+  function changeSettings(obj) {
+    const cat = new Map(settingsCatalog().map(x => [x.key, x])), done = [], before = {};
+    for (const [k, v] of Object.entries(obj || {})) {
+      const c = cat.get(k); if (!c || settings[k] === v) continue; const was = settings[k];
+      const t = document.querySelector(`[data-set="${k}"]`), seg = document.querySelector(`[data-seg="${k}"] [data-v="${CSS.escape(String(v))}"]`);
+      if (t) { t.checked = v === true || v === 'true'; t.dispatchEvent(new Event('change')); }
+      else if (seg) seg.click();
+      else if (k === 'mochi' && MOCHI_COLORS[v]) { settings.mochi = v; applySettings(); hopMochi(); }
+      else if (k === 'noteColor' && (v === 'random' || COLOR_NAMES.includes(v))) { settings.noteColor = v; applySettings(); }
+      else if (k === 'mochiName' || k === 'name') { settings[k] = String(v || '').trim().slice(0, 24); applySettings(); if (k === 'name' && $('setName')) $('setName').value = settings.name; }
+      else if (k === 'cursor' && /^#[0-9a-f]{6}$/i.test(v)) { settings.cursor = v; applySettings(); }
+      else continue;
+      before[k] = was; done.push(c.what.split(':')[0]);
+    }
+    return { done, before };
+  }
+  // "connect all my folders": always one clear yes first, because it's everything in their home folder
+  // only a plain "connect all my folders" skips Claude; anything about boards or projects ("add all my folders to Design") goes to her as usual
+  const ALL_FILES = /\b(connect|hook up|give (you|mochi|mochiboard) access to|let (you|mochi|mochiboard) (see|read|into))\b.{0,20}\b(all|every|everything)\b.{0,15}\b(of )?(my )?(files|folders|stuff|computer|mac)\b|\b(connect|access) (to )?everything\b/i;
+  const NOT_ALL_FILES = /\b(projects?|boards?|cards?|notes?|together|into|onto|inside|sections?|groups?|sidebar|left box)\b/i;
+  function offerAllFiles() {
+    if (connected.some(f => f.all)) return say('All your files are already connected ✦ Find them under On your Mac in the left box.', 7000);
+    say('That lets Mochiboard see every file in your home folder: Desktop, Documents, Downloads and the rest. It only looks when you use it, never changes anything, and I only read files when you ask. Connect everything?', 0,
+      [{ label: 'Yes, connect all my folders ✦', run: () => connectAll() }, { label: 'Not now', ghost: true, run: () => {} }]);
+  }
+  const acts0 = r => !!r.confirm;
+  // a real design ask names a screen-ish thing; "start a checklist" or "style these notes" doesn't count
+  const DESIGN_ASK = /\b(screens?|menus?|hud|mock ?ups?|wireframes?|splash|lobby|landing page|home ?page|redesign|restyle (my|the|our) (game|app|site)|(design|make|build|draw|mock) (me )?(a |an |the |my |our |some )?([\w-]+ ){0,2}(ui|layout|page|interface|screen|menu))\b/i;
+  let pendingShots = null, lookedOnce = false, lastShots = [], checking = false;
+  // she checks her work like a designer would: photograph the screens she just built, put them next to the real game, and fix what's off (once)
+  async function checkWork(frames, q) {
+    if (!MB.native || !frames.length || checking) return; checking = true;
+    await new Promise(r => setTimeout(r, 1600));   // their art finishes loading
+    const keep = { ...view }, keepSel = [...sel], built = [];
+    selectOnly([]); document.body.classList.add('mochi-snap');
+    try {
+      for (const f of frames.slice(0, 3)) {
+        const sr = stage.getBoundingClientRect(), z = Math.min(1, (sr.width - 80) / f.w, (sr.height - 80) / f.h);
+        view = { x: sr.width / 2 - (f.x + f.w / 2) * z, y: sr.height / 2 - (f.y + f.h / 2) * z, z }; applyView();
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 250))));
+        const el = cardsEl.querySelector(`[data-id="${f.id}"]`); if (!el) continue; const b = el.getBoundingClientRect();
+        try { built.push({ of: `the screen you built: “${f.name}” (frame id ${f.id})`, size: 'built', path: await MB.snapRect({ x: b.left, y: b.top, w: b.width, h: b.height, name: f.name }) }); } catch (e) {}
+      }
+    } finally { document.body.classList.remove('mochi-snap'); view = keep; applyView(); selectOnly(keepSel); }
+    if (!built.length) { checking = false; return; }
+    pendingShots = [...lastShots, ...built]; lookedOnce = true;
+    await ask(`CHECK YOUR WORK: compare your screens (${frames.map(f => `"${f.name}" id ${f.id}`).join(', ')}) with their real game and fix what doesn't match. The original request was: ${q}`, false, true, 'Let me check it against your game and tidy it up…');
+    lookedOnce = false; checking = false;
+  }
+  // a fixed screen replaces the old one in the same spot (with its note)
+  function replaceScreen(o) {
+    const f = byId(o.id); if (!f || f.type !== 'frame') return null; const x = f.x, y = f.y;
+    const gone = new Set([f.id, ...board.cards.filter(c => c.onFrame === f.id).map(c => c.id), ...board.cards.filter(c => c.type === 'note' && c.x === f.x && Math.abs(c.y - (f.y + f.h + 28)) < 6).map(c => c.id)]);
+    board.cards = board.cards.filter(c => !gone.has(c.id)); gone.forEach(id => cardsEl.querySelector(`[data-id="${id}"]`)?.remove());
+    board.links.forEach(l => { if (l.a === f.id || l.b === f.id) l._dead = true; }); board.links = board.links.filter(l => !l._dead);
+    const { f: nf, made } = buildScreen(o, x, y); return { nf, made };
+  }
+  // their real art, from their files, into wireframe image spots and picture cards
+  async function fillFileArt(cs) {
+    for (const c of cs) { if (c.fileVideo) { const path = c.fileVideo; delete c.fileVideo;
+        try { const r = await MB.videoURL(path); c.video = r.url; c.art = r.from || path; delete c.src; delete c.img; c.nobg = true; c.fill = 'transparent'; } catch (e) { c.img = baseName(path); say(e.message, 5000); } renderCard(c); continue; }
+      if (!c.fileSrc) continue; const path = c.fileSrc; delete c.fileSrc;
+      try { const r = await MB.readImage(path); c.src = r.src; c.art = path; delete c.img; if (c.type === 'image' && r.w && r.h) { c.h = Math.round(c.w * r.h / r.w) + (c.noframe ? 0 : 16); } renderCard(c); } catch (e) { c.img = c.img || baseName(path); renderCard(c); } }
+    save();
+  }
+  async function connectForMochi(q) {
+    if (settings.mochiFiles === false) { settings.mochiFiles = true; applySettings(); document.querySelectorAll('[data-set="mochiFiles"]').forEach(t => t.checked = true); if (connected.length) return ask(q, false, true); }
+    const added = await connectFolder(); if (added.length) ask(q, false, true);
+  }
+  function askAbout(c) {
+    const p = c.type === 'folder' ? dirOf(c) : c.path;
+    const folder = c.type === 'folder' ? p : parentP(p);
+    if (settings.mochiFiles === false) return say('I can read this once you let me see your folders ✦', 0, [{ label: 'Let Mochi read my folders ✦', run: () => { settings.mochiFiles = true; applySettings(); document.querySelectorAll('[data-set="mochiFiles"]').forEach(t => t.checked = true); askAbout(c); } }, { label: 'Not now', ghost: true, run: () => {} }]);
+    if (!inConnected(p)) return say(`I need to see “${baseName(folder)}” first. One tap and I can read it ✦`, 0, [{ label: `Connect “${baseName(folder)}” ✦`, run: async () => { const a = await connectPaths([folder]); if (a.length || inConnected(p)) askAbout(c); } }, { label: 'Not now', ghost: true, run: () => {} }]);
+    selectOnly([c.id]); mochiOpen(true); const i = $('mcInput'); i.value = c.type === 'folder' ? 'What’s in this folder? Sum it up in a few notes' : 'Sum up this file in a few notes'; i.focus(); i.select();
+  }
   const uniqueName = (arr, base) => { let n = base, k = 2; while (byName(arr, n)) n = base + ' ' + k++; return n; };
   function renameNewest(sel, obj) { const el = [...document.querySelectorAll(`#boards ${sel}`)].find(n => n.querySelector('.fname').textContent === obj.name); if (el) inlineRename(el.querySelector('.fname'), obj); }
   let renamingNow = false;
   async function refreshBoards() {
     if (document.querySelector('#boards [contenteditable="true"], .home [contenteditable="true"]')) { renamingNow = true; return; }   // don't redraw under someone typing a name
-    await loadLib();
+    const gen = refreshBoards.gen = (refreshBoards.gen || 0) + 1;   // only the newest refresh draws
+    // everything it needs is fetched first, then the list is drawn in one go, so two refreshes close together can't both add their parts
+    await Promise.all([loadLib(), MB.native ? connectedFresh() : null]); if (gen !== refreshBoards.gen) return;
     const el = $('boards'); el.innerHTML = '';
     // inside a project (on Home or on one of its boards) the left box shows just that project; in All projects it shows everything
     const sf = homeAt ? (homeAt.level === 'folder' ? folders.find(x => x.id === homeAt.id) : null) : folders.find(x => x.id === board?.folder);
     const sp = homeAt?.level === 'project' ? projects.find(x => x.id === homeAt.id) : sf && projects.find(x => x.id === sf.project);
     const scoped = homeAt?.level !== 'all' && (sp || sf);
     $('treeLabel').textContent = scoped ? 'In this project' : 'Everything';
-    if (scoped) { if (sp) { sp.open = true; el.appendChild(projectNode(sp)); } else { const top = folderChain(sf)[0]; top.open = true; el.appendChild(folderNode(top)); } $('homeBtn').classList.add('out'); renderCrumbs(); if (homeAt) renderHome(); return; }
+    if (scoped) { if (sp) { sp.open = true; el.appendChild(projectNode(sp)); } else { const top = folderChain(sf)[0]; top.open = true; el.appendChild(folderNode(top)); } if (MB.native) el.appendChild(connectedSide()); $('homeBtn').classList.add('out'); renderCrumbs(); if (homeAt) renderHome(); return; }
     $('homeBtn').classList.remove('out');
     shownProjects().forEach(p => el.appendChild(projectNode(p)));
     looseFolders().forEach(f => el.appendChild(folderNode(f)));
@@ -328,6 +672,7 @@
     el.appendChild(loose);
     dropZone(loose, 'board', id => moveBoard(id, null));
     dropZone(el, 'folder', id => putFolder(id, null, null));
+    if (MB.native) el.appendChild(connectedSide());
     const nArch = projects.length - shownProjects().length;
     if (nArch) { const a = document.createElement('button'); a.className = 'arch-link'; a.textContent = `Archived · ${nArch}`; a.title = 'Projects you archived: open one or restore it'; a.onclick = () => openHome('archived'); el.appendChild(a); }
     renderCrumbs(); if (homeAt) renderHome();
@@ -663,12 +1008,15 @@
       case 'ink': return `<svg viewBox="0 0 ${c.ow} ${c.oh}" preserveAspectRatio="none">${inkPath(c.pts, c.pen, c.size, c.ink, true)}</svg>`;
       case 'frame': return `<div class="fr-body"></div><div class="fr-name">${esc(c.name || 'Screen')}</div>`;
       case 'section': return `<div class="sec-glass"></div><div class="sec-name"><span class="text">${esc(c.text || 'Section')}</span></div>`;
-      case 'box': return `<div class="bx">${c.src ? `<img class="bx-img" src="${c.src}" alt="" draggable="false" style="${frameStyle(c)}">` : ''}</div>${c.src ? `<img class="bx-ghost" src="${c.src}" alt="" draggable="false" style="${frameStyle(c)}"><button class="bx-fr" title="Adjust the crop">⤢ Crop</button><button class="chip" data-act="colors">pull colors ✦</button>` : ''}${c.img && !c.src ? `<div class="bx-ph"><img class="bx-art" src="stamps/ph/${phScene(c)}.png" alt=""><span class="bx-l">${esc(c.img)}</span></div>` : ''}`;
+      case 'box': if (c.video) return `<div class="bx"><video class="bx-img bx-vid" data-v="${esc(c.video)}" autoplay muted loop playsinline style="${frameStyle(c)}"></video></div>`;   // a looping animation from their files (an animated logo, a character)
+        return `<div class="bx">${c.src ? `<img class="bx-img" src="${c.src}" alt="" draggable="false" style="${frameStyle(c)}">` : ''}</div>${c.src ? `<img class="bx-ghost" src="${c.src}" alt="" draggable="false" style="${frameStyle(c)}"><button class="bx-fr" title="Adjust the crop">⤢ Crop</button><button class="chip" data-act="colors">pull colors ✦</button>` : ''}${c.img && !c.src ? `<div class="bx-ph"><img class="bx-art" src="stamps/ph/${phScene(c)}.png" alt=""><span class="bx-l">${esc(c.img)}</span></div>` : ''}`;
       case 'font': { const f = esc(c.font || 'DM Sans'); useFont(c.font); return `<div class="fs-aa" style="font-family:'${f}', system-ui">Aa</div><div class="fs-meta"><b>${f}</b><span class="fs-src">${onMac(c.font) ? 'On your Mac' : 'Google Fonts'}</span></div><div class="fs-sample text" style="font-family:'${f}', system-ui">${esc(c.text || 'The quick brown fox jumps over the lazy dog')}</div>`; }
       case 'icon': return `<span class="mi">${esc(c.name || 'star')}</span>`;
       case 'text': return `<div class="text tx">${esc(c.text || '')}</div>`;
       case 'coll': return `<div class="coll-head"><span class="text">${esc(c.text)}</span></div><div class="coll-frame"></div>${(c.kids || []).length ? '' : '<div class="coll-empty">Drop cards here</div>'}`;
       case 'title': return `<div class="text">${esc(c.text)}</div>`;
+      case 'file': return fileInner(c);
+      case 'folder': return folderInner(c);
       case 'table': { const rows = c.rows?.length ? c.rows : [['']], hd = c.head !== false;   // a table: rows of cells, the first row is the header unless you turn it off
         return `<table class="tb${hd ? ' has-head' : ''}"><tbody>${rows.map((r, i) => `<tr>${r.map((v, j) => { const tg = i === 0 && hd ? 'th' : 'td'; return `<${tg} data-r="${i}" data-c="${j}">${esc(v)}</${tg}>`; }).join('')}</tr>`).join('')}</tbody></table>`
           + `<button class="tb-add tb-addr" data-act="tb-row" title="Add a row" aria-label="Add a row">+</button><button class="tb-add tb-addc" data-act="tb-col" title="Add a column" aria-label="Add a column">+</button>`; }
@@ -685,7 +1033,7 @@
     return '';
   }
   // which cards can be tilted by hand: everything except the things that hold other things (sections, screens, collections) and wireframe pieces (they rotate their own way)
-  const TILTS = c => !['section', 'frame', 'coll', 'ink', 'box', 'text', 'icon'].includes(c.type);   // (the wireframe list WF isn't set up yet when the first cards draw)
+  const TILTS = c => !['section', 'frame', 'coll', 'ink', 'box', 'text', 'icon', 'folder'].includes(c.type);   // (the wireframe list WF isn't set up yet when the first cards draw)
   const SIZED_T = ['note', 'todo', 'title', 'shape', 'coll', 'table'];
   // strokes: boxes and screens get a border (solid or dashed); titles, wireframe text and icons get an outline around the letters
   const STROKABLE = ['box', 'frame', 'title', 'text', 'icon', 'path', 'shape', 'image'], STROKE_TEXT = ['title', 'text', 'icon'];
@@ -763,7 +1111,7 @@
     if (c.type === 'spotify') { const fr = el.querySelector('.sp-frame'); if (fr && fr.dataset.src === spEmbed(c)) { const t = el.querySelector('.sp-head span'); if (t) t.textContent = c.title || 'Spotify'; const tg = el.querySelector(':scope > .tag'); if (tg) tg.textContent = c.tagText || ''; if (!!tg === !!c.tagText) return el; } }
     el.innerHTML = `<div class="frame"></div><div class="body">${inner(c)}</div>${c.tagText ? `<div class="tag">${esc(c.tagText)}</div>` : ''}<div class="knob"></div><div class="handle"></div>${TILTS(c) ? '<i class="rot-h" title="Drag to tilt"></i>' : ''}`;
     el.classList.toggle('kitc', !!c.kit); el.classList.toggle('lane', !!c.lane); el.classList.toggle('nobg', !!c.nobg); el.classList.toggle('noframe', !!c.noframe);
-    if (c.type === 'video') setupVideo(c, el); maskVars(c, el); el.style.setProperty('--cw', Math.max(1, c.w) + 'px'); el.classList.toggle('tiny', c.w < 140 || c.h < 90);
+    if (c.type === 'video') setupVideo(c, el); if (c.type === 'file' || c.type === 'folder') hydrateFiles(c, el); if (c.type === 'box' && c.video) { const v = el.querySelector('video.bx-vid'); if (v) MB.mediaURL(c.video).then(u => { if (v.getAttribute('src') !== u) v.src = u; v.play?.().catch(() => {}); }); } maskVars(c, el); el.style.setProperty('--cw', Math.max(1, c.w) + 'px'); el.classList.toggle('tiny', c.w < 140 || c.h < 90);
     if (el.classList.contains('masked')) el.querySelectorAll('.chip, .bx-fr').forEach(ch => el.appendChild(ch));   // the chips live outside the mask's clip, so Crop stays clickable
     if (WF.includes(c.type)) styleWF(c, el);   // after the insides exist
     else applyStroke(c, el);
@@ -774,7 +1122,7 @@
   function keepOnScreens() { const at = new Map(board.cards.map((c, i) => [c.id, i])); if (!board.cards.some(c => c.onFrame && at.has(c.onFrame) && at.get(c.id) < at.get(c.onFrame))) return;
     const kids = new Map(); board.cards.forEach(c => { if (c.onFrame && at.has(c.onFrame) && at.get(c.id) < at.get(c.onFrame)) { if (!kids.has(c.onFrame)) kids.set(c.onFrame, []); kids.get(c.onFrame).push(c); } });
     const moving = new Set([...kids.values()].flat()), out = []; board.cards.forEach(c => { if (moving.has(c)) return; out.push(c); (kids.get(c.id) || []).forEach(k => out.push(k)); }); board.cards = out; }
-  function renderAll() { keepOnScreens(); wireLayers(); layersSoon(); applyColors(); cardsEl.innerHTML = ''; board.cards.filter(c => c.type === 'coll').forEach(c => renderCard(c)); board.cards.filter(c => c.type !== 'coll').forEach(c => renderCard(c)); layoutAll(); renderWires(); renderTray(); applyView(); }
+  function renderAll() { keepOnScreens(); wireLayers(); layersSoon(); applyColors(); cardsEl.innerHTML = ''; board.cards.filter(c => c.type === 'coll').forEach(c => renderCard(c)); board.cards.filter(c => c.type !== 'coll').forEach(c => renderCard(c)); layoutAll(); renderWires(); renderTray(); applyView(); watchSoon(); }
 
   // ---------- round 2 pieces: icons, shapes, link hosts ----------
   const CI = d => `<svg class="cic" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
@@ -1105,13 +1453,14 @@
     if (c.ln) return c.ln;
     const t = {
       frame: c.name || 'Screen', coll: c.name || 'Collection', note: lyText(c.name) || lyText(c.text), text: lyText(c.text), title: lyText(c.text), todo: lyText(c.text) || lyText(c.items?.[0]?.t), table: 'Table' + ((c.rows?.[0] || []).filter(v => (v || '').trim()).length ? ' · ' + lyText(c.rows[0].filter(v => (v || '').trim()).join(', ')) : ''),
-      image: c.tagText || 'Image', link: c.title || (c.url ? host(c.url) : 'Link'), doc: c.text || 'Doc', canvas: c.text || 'Canvas', swatch: c.label || (c.hex || '').toUpperCase(),
+      image: c.tagText || 'Image', file: c.name || 'File', folder: c.name || 'Folder', link: c.title || (c.url ? host(c.url) : 'Link'), doc: c.text || 'Doc', canvas: c.text || 'Canvas', swatch: c.label || (c.hex || '').toUpperCase(),
       shape: (c.kit && lyText(c.text)) || SHAPE_N[c.shape || 'rect'], path: c.closed ? 'Pen shape' : 'Pen line', stamp: 'Stamp', icon: c.name || 'Icon', audio: 'Voice memo', video: c.title || 'Video', spotify: c.title || 'Spotify', ink: 'Drawing', box: c.img ? 'Image spot' : 'Box', font: c.font || 'DM Sans',
     }[c.type];
     return t || ({ note: 'Note', text: 'Text', title: 'Title', todo: 'Checklist' })[c.type] || c.type;
   }
   function layerIcon(c) {
     if (c.type === 'section') return LICON.section;
+    if (c.type === 'folder') return CFIC; if (c.type === 'file') return CIC.doc;
     if (c.type === 'stamp') { const s = c.src || pxSrc(c.emoji || '⭐'); return s ? `<img src="${esc(s)}" alt="">` : `<span class="ly-emo">${esc(c.emoji || '⭐')}</span>`; }
     if (c.type === 'swatch') return `<i class="ly-sw" style="background:${esc(c.hex)}"></i>`;
     if (c.type === 'icon') return `<span class="mi">${esc(c.name || 'star')}</span>`;
@@ -1447,6 +1796,8 @@
   }
   function startEdit(id, target) {
     const el = cardsEl.querySelector(`[data-id="${id}"]`), c = byId(id); if (!el || !c) return;
+    if (c.type === 'file') return FINFO.get(c.path)?.exists === false ? findFile(c) : openFileCard(c);   // double-click opens the real file
+    if (c.type === 'folder') return;   // inside a folder card, double-clicks open what's in it
     if (target && target.closest('.tag')) return editTag(c);
     if (target && target.closest('.nname')) return editField(el, el.querySelector('.nname'), v => c.name = v);
     if (c.type === 'coll') return editField(el, el.querySelector('.coll-head .text'), v => c.text = v);
@@ -1710,6 +2061,7 @@
   cardsEl.addEventListener('click', e => {
     const el = e.target.closest('.card'); if (!el) return; const c = byId(el.dataset.id), act = e.target.closest('[data-act]')?.dataset.act;
     if (act && act.startsWith('vd-')) return videoAct(c, act, e);
+    if (act && /^f[lo]-/.test(act)) return fileAct(c, act, e, el);
     if (act && act.startsWith('au-')) return audioAct(c, act, e);
     if (act === 'colors') pullColors(c);
     if (act === 'tb-row' || act === 'tb-col') return tableEdit(c, act === 'tb-row' ? 'row+' : 'col+');
@@ -2001,7 +2353,8 @@
   stage.addEventListener('dragover', e => e.preventDefault());
   stage.addEventListener('drop', e => { e.preventDefault(); const files = [...e.dataTransfer.files], w = toWorld(e.clientX, e.clientY);
     const bid = e.dataTransfer.getData('mb/board'); if (bid && board) return nestBoard(bid, board.id, { x: w.x - 130, y: w.y - 90 }).then(ok => ok && refreshBoards());
-    if (files.length) return addImages(files, w, overTray(e));
+    const cf = e.dataTransfer.getData('mb/cfolder'); if (cf && board) { const f = connected.find(x => x.id === cf); if (f) putFolderCard(f, w); return; }
+    if (files.length) { const media = files.filter(f => /^(image|video)\//.test(f.type)), other = files.filter(f => !media.includes(f)); if (media.length) addImages(media, w, overTray(e)); if (other.length) dropFiles(other, w); window.__dropPaths = null; return; }
     const u = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain'); if (/^https?:/.test(u)) linkCard(u.trim(), w); });
 
   // ---------- Mochi on the board ----------
@@ -2017,7 +2370,7 @@
   // ---------- settings: Mochi's color and greeting, her helpers, how the board looks ----------
   const MOCHI_COLORS = { blue: { B: '#33c7ff', S: '#ccf5ff', D: '#1480db' }, pink: { B: '#ff8fc2', S: '#ffe0ee', D: '#e0559a' }, mint: { B: '#5fdba0', S: '#d9fbe9', D: '#2fae73' },
     lilac: { B: '#b49bff', S: '#ece5ff', D: '#7e5ee6' }, butter: { B: '#ffd54f', S: '#fff4c4', D: '#e0a800' }, peach: { B: '#ffa978', S: '#ffe6d6', D: '#e57841' }, night: { B: '#4a4f7a', S: '#8d93c9', D: '#2b2e4f' } };
-  const settings = Object.assign({ pullColors: true, imgRadius: true, panelH: {}, mochiName: '', mochiCalm: 'lively', mochiChar: true, tbSize: 'm', dblNote: true, wLayers: true, wColors: true, wDressup: false, wMusic: false,   /* the playful widgets wait until someone switches them on */ wDesign: true, wTray: true, autoLink: true, imgFrame: true, wLearn: true, ports: true, hints: true,  mochi: 'blue', greet: true, grid: true, tilt: true, motion: true, keys: true, theme: 'system', chat: 'normal', emoji: true, noteColor: 'random', snap: false, ai: true, mobbin: true, higgs: true, chatKeep: 'board', chatMax: '60', cursor: '#ff9ec4', fancyCursor: true, colors: { light: {}, dark: {} } }, (() => { try { return JSON.parse(localStorage.getItem('mochiboard:settings') || '{}'); } catch (e) { return {}; } })());
+  const settings = Object.assign({ pullColors: true, imgRadius: true, panelH: {}, mochiName: '', mochiCalm: 'lively', mochiChar: true, tbSize: 'm', dblNote: true, wLayers: true, wColors: true, wDressup: false, wMusic: false,   /* the playful widgets wait until someone switches them on */ wDesign: true, wTray: true, autoLink: true, imgFrame: true, wLearn: true, ports: true, hints: true,  mochi: 'blue', greet: true, grid: true, tilt: true, motion: true, keys: true, theme: 'system', chat: 'normal', emoji: true, noteColor: 'random', snap: false, ai: true, mobbin: true, higgs: true, mochiFiles: true, chatKeep: 'board', chatMax: '60', cursor: '#ff9ec4', fancyCursor: true, colors: { light: {}, dark: {} } }, (() => { try { return JSON.parse(localStorage.getItem('mochiboard:settings') || '{}'); } catch (e) { return {}; } })());
   try { if (localStorage.getItem('mochiboard:keys') === 'hide') settings.keys = false; } catch (e) {}
   // ---------- widgets snap into the left and right sidebars. Drag one by its title: little drop boxes show where it can go ----------
   // the Boards panel is pinned at the top left (it's home to your boards and Settings), everything else can move
@@ -2180,7 +2533,7 @@
   $('devAllow').onclick = async () => { try { const st = await openMedia(true); st.getTracks().forEach(t => t.stop()); } catch (e) { try { const st = await openMedia(false); st.getTracks().forEach(t => t.stop()); } catch (e2) {} } fillDevices(); };
   navigator.mediaDevices?.addEventListener?.('devicechange', () => { if ($('settings').classList.contains('on')) fillDevices(); });
   $('gearBtn').onclick = e => { e.stopPropagation(); fillDevices(); paintWhisper(); showConnections(true);   // always a fresh look at Claude's connections
-    if (placing) stopPlacing(); if (sel.size) selectOnly([]); checkUpdate(); showUsage(); $('boardCount').textContent = `${boardList.length} board${boardList.length === 1 ? '' : 's'}, kept on this Mac. They never leave your computer.`; showConnections(true); $('settings').classList.add('on'); };
+    if (placing) stopPlacing(); if (sel.size) selectOnly([]); checkUpdate(); showUsage(); $('boardCount').textContent = `${boardList.length} board${boardList.length === 1 ? '' : 's'}, kept on this Mac. They never leave your computer.`; showHome(); showConnections(true); if (MB.native) loadConnected().then(renderConnected); $('settings').classList.add('on'); };
   const closeSettings = () => $('settings').classList.remove('on');
   // settings tabs: one topic at a time, so it isn't one long scroll
   function setTab(t) { $('setTabs').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tab === t)); $('settings').querySelectorAll('.set-body section[data-tab]').forEach(sec => sec.classList.toggle('tab-off', sec.dataset.tab !== t)); $('settings').querySelector('.set-body').scrollTop = 0; if (t === 'helpers') showUsage(); }
@@ -2321,6 +2674,24 @@
   let deselectAt = 0;
   const snapTo = v => settings.snap ? Math.round(v / 26) * 26 : v;
   $('revealBoards').onclick = () => MB.reveal();
+  // where boards are saved: this computer's own folder, or one they pick (Dropbox, iCloud Drive) so boards follow them to another computer
+  async function showHome() {
+    if (!MB.native) return; let h = null; try { h = await MB.boardsHome(); } catch (e) {} if (!h) return;
+    $('homeTitle').textContent = h.custom ? 'Saved in your own folder' : 'Saved on this Mac';
+    if (h.custom) $('boardCount').textContent = `${h.path} · ${h.count} board${h.count === 1 ? '' : 's'}`;
+    $('moveBoards').textContent = h.custom ? 'Move them…' : 'Choose a folder…';
+    $('homeBackRow').hidden = !h.custom && !h.missing;
+    $('homeBackSub').textContent = h.missing ? `Your boards folder (${h.missing}) isn’t here right now, so these are the boards kept on this Mac. Plug the drive in and reopen Mochiboard, or stop using that folder.` : 'Copies every board back into Mochiboard’s own folder on this Mac. The folder you picked keeps its copies';
+    $('homeBack').textContent = h.missing ? 'Stop using it' : 'Bring them back';
+  }
+  const flushSave = async () => { if (saveT && board) { clearTimeout(saveT); saveT = 0; board.view = view; await MB.save(board); } };
+  async function rehome(go) {
+    await flushSave(); let h; try { h = await go(); } catch (e) { return say(e.message, 7000); } if (!h || h.cancelled) return;
+    await refreshBoards(); showHome(); chirp(h.custom ? `Your boards live in ${h.path} now ✦ Every change saves there.` : 'Your boards are back in Mochiboard’s own folder ✦', 6000);
+  }
+  $('moveBoards').onclick = () => rehome(MB.moveBoards);
+  $('homeBack').onclick = () => rehome(MB.resetBoardsHome);
+  $('cfAdd').onclick = connectFolder; $('cfAll').onclick = () => { $('cfAsk').hidden = false; }; $('cfAllYes').onclick = connectAll; $('cfAllNo').onclick = () => { $('cfAsk').hidden = true; };
   let sayT = 0;
   // the little extras: skipped when she's set to Quiet
   function chirp(text, ms, acts) { if (settings.chat !== 'quiet') say(text, ms, acts); }
@@ -2333,7 +2704,15 @@
   }
   // ---------- Mochi's chat window: click her to open it, click again (or Esc) to close ----------
   const chatOpen = () => $('mochi').classList.contains('chat');
-  function mochiOpen(on) { $('mochi').classList.toggle('chat', on); if (on) { $('mBubble').classList.remove('on'); renderChat(); $('mcInput').focus(); } }
+  function mochiOpen(on) { $('mochi').classList.toggle('chat', on); if (on) { $('mBubble').classList.remove('on'); renderChat(); fitChat(); $('mcInput').focus(); } }
+  // the chat slides left just enough to clear the right-hand panels, so the widgets stay in front, bright and clickable while Mochi is open
+  function fitChat() {
+    const ch = $('mChat'), sr = $('sideR'); if (!ch) return; ch.style.right = '';
+    if (!chatOpen() || !sr || getComputedStyle(sr).visibility === 'hidden' || getComputedStyle(sr).opacity === '0') return;
+    const a = ch.getBoundingClientRect(), b = sr.getBoundingClientRect(); if (!b.width || a.right <= b.left - 12 || a.bottom < b.top || a.top > b.bottom) return;
+    const shift = Math.min(a.right - b.left + 12, Math.max(0, a.left - 12)); ch.style.right = shift + 'px';
+  }
+  addEventListener('resize', () => fitChat()); if ($('sideR')) new ResizeObserver(() => fitChat()).observe($('sideR'));
   $('mPill').onclick = () => mochiOpen(!chatOpen());
   $('mcClose').onclick = () => mochiOpen(false);
   $('mcNew').onclick = () => { chatLog().length = 0; if (settings.chatKeep === 'board') { board.chat = []; save(); } renderChat(); $('mcInput').focus(); };
@@ -2368,11 +2747,12 @@
   // what Mochi sees: the cards (trimmed), where they are, what's selected, and what's in Unsorted
   function snapshot() {
     const brief = c => ({ id: c.id, type: c.type, x: Math.round(c.x), y: Math.round(c.y), w: Math.round(c.w), h: Math.round(c.h), color: c.color,
-      text: (c.text || c.title || c.label || '').slice(0, 300), font: c.font, name: c.name, kids: c.kids, desc: c.desc, body: c.body ? c.body.slice(0, 600) : undefined, shape: c.shape, tag: c.tagText, items: c.items ? c.items.map(i => i.t) : undefined, rows: c.rows ? c.rows.slice(0, 40).map(r => r.slice(0, 12).map(x => String(x || '').slice(0, 80))) : undefined, header: c.type === 'table' ? c.head !== false : undefined, hex: c.hex, url: c.url, selected: sel.has(c.id) || undefined });
+      text: (c.text || c.title || c.label || '').slice(0, 300), font: c.font, name: c.name, path: c.type === 'file' ? c.path : c.type === 'folder' ? dirOf(c) : undefined, art: c.art, onScreen: c.onFrame, kids: c.kids, desc: c.desc, body: c.body ? c.body.slice(0, 600) : undefined, shape: c.shape, tag: c.tagText, items: c.items ? c.items.map(i => i.t) : undefined, rows: c.rows ? c.rows.slice(0, 40).map(r => r.slice(0, 12).map(x => String(x || '').slice(0, 80))) : undefined, header: c.type === 'table' ? c.head !== false : undefined, hex: c.hex, url: c.url, selected: sel.has(c.id) || undefined });
     return { name: board.name, cards: board.cards.map(brief), links: board.links.map(l => [l.a, l.b]), unsorted: board.tray.map(brief), styles: { colors: board.styles.colors, text: board.styles.text.map(t => t.name) },
       fontsOnThisMac: FONTS.filter(f => !/^(\.|Apple |System|STIX|Noto Sans [A-Z][a-z]+ [A-Z])/.test(f)).slice(0, 400),
       recentChat: (settings.chatKeep === 'off' ? chatLog().slice(-2) : chatLog().slice(-8)).map(m => `${m.who === 'me' ? 'Person' : 'Mochi'}: ${m.text}`),
       mochiStyle: (settings.name ? `The person's name is ${settings.name}; use it now and then, not in every reply. ` : '') + ({ quiet: 'Keep "say" to one short sentence.', normal: 'Keep "say" short and warm.', chatty: 'Be warm, playful and encouraging in "say" (2 to 3 sentences, a little cheer is welcome).' }[settings.chat] || '') + (settings.emoji ? ' A couple of fitting emojis in "say" are welcome.' : ' Never use emojis.'),
+      remembered: board.mochiNotes || [], settings: settingsCatalog(), yourFolders: connected.filter(f => !f.missing).map(f => f.name),
       library: { projects: projects.map(p => ({ name: p.name, folders: foldersIn(p.id).map(f => f.name) })), foldersNotInAProject: looseFolders().map(f => f.name), boards: boardList.map(b => ({ id: b.id, name: b.name, folder: (folders.find(f => f.id === b.folder) || {}).name || null, current: b.id === board.id || undefined })) } };
   }
   // without AI (switched off, or Claude Code not installed) Mochi still helps with the simple stuff, right here on the Mac
@@ -2399,19 +2779,25 @@
     const what = /mobbin/i.test(q) ? 'Mobbin lives in your Claude account, and I can only reach it from the Mac app.' : /higgsfield|photo|picture|image/i.test(q) ? 'Making pictures with Higgsfield happens in the Mac app, where I can check the price with you first.' : 'I think with Claude Code, and that lives in the Mac app.';
     say(`I'd love to help with that! ${what} Download me and I'll connect to your Claude, Mobbin and Higgsfield ✦`, 0, DL);
   }
-  async function ask(q, confirmed = false) {
+  async function ask(q, confirmed = false, again = false, note = '') {
     const tj = !confirmed && q.match(TELL_JESSA);
     if (tj) { if (!chatOpen()) mochiOpen(true); addMsg('me', q); const note = tj[1].trim().replace(/^[\s.!?…]+$/, '');
       return addMsg('mochi', note ? "Want me to send that to Jessa? You'll see exactly what goes out first." : 'What should I tell her? I can open a note for you.', [{ label: note ? 'Review and send ♡' : 'Write a note ♡', run: () => openFeedback(note.charAt(0).toUpperCase() + note.slice(1)) }, { label: 'Not now', ghost: true, run: () => {} }]); }
     if (MB.web) { if (!chatOpen()) mochiOpen(true); addMsg('me', q); return webMochi(q); }
+    if (!confirmed && !again && MB.native && ALL_FILES.test(q) && !NOT_ALL_FILES.test(q)) { if (!chatOpen()) mochiOpen(true); addMsg('me', q); return offerAllFiles(); }   // no need to think for this one
     if (!settings.ai || haveClaude === false) { if (!chatOpen()) mochiOpen(true); addMsg('me', q); }
     if (!settings.ai) return offlineMochi(q, "My thinking is switched off in Settings, so I can only do simple tidying.");
     if (haveClaude === false) { await showConnections(true); if (haveClaude === false) return offlineMochi(q, "I need Claude Code on this Mac to think. It's a one-time setup with your Claude account."); }   // look again first: they may have just set it up
     if (!navigator.onLine) { if (!chatOpen()) mochiOpen(true); addMsg('me', q); return offlineMochi(q, "You're offline, so I can't think with Claude right now. I'll be back when the internet is."); }
     if (!chatOpen()) mochiOpen(true);
-    if (!confirmed) addMsg('me', q); else addMsg('mochi', 'Making it… this can take a minute ✦');
+    if (again) addMsg('mochi', note || 'Thanks! Looking now ✦'); else if (!confirmed) addMsg('me', q); else addMsg('mochi', 'Making it… this can take a minute ✦');
     $('mochi').classList.add('thinking'); goo.think(true); favGoo?.think(true); typing(true, confirmed ? 'making it' : doingLabel(q));
-    try { const raw = await MB.ask((window.mochiName && window.mochiName !== 'Mochi' ? `(The person named you ${window.mochiName}. That's your name now; sign off and refer to yourself that way.) ` : '') + q, snapshot(), confirmed, { mobbin: settings.mobbin, higgs: settings.higgs }); await applyMochi(parse(raw), q); }
+    // designing something for their game or site: photograph its pages first so she can see the real look (the .html cards on the board, selected ones first)
+    let shots = pendingShots || []; pendingShots = null;
+    if (!shots.length && MB.native && !confirmed && DESIGN_ASK.test(q)) { const pages = [...selCards(), ...board.cards].filter(c => c.type === 'file' && isWeb(c)).map(c => c.path).filter((p, k, a) => a.indexOf(p) === k).slice(0, 3);
+      if (pages.length) { typing(true, 'looking at your game'); try { shots = (await MB.lookAt(pages)) || []; } catch (e) { shots = []; } typing(true, doingLabel(q)); } }
+    const snap = snapshot(); if (shots.length) { snap.screenshots = shots; lastShots = shots.filter(x => x.size !== 'built'); }
+    try { const raw = await MB.ask((window.mochiName && window.mochiName !== 'Mochi' ? `(The person named you ${window.mochiName}. That's your name now; sign off and refer to yourself that way.) ` : '') + q, snap, confirmed, { mobbin: settings.mobbin, higgs: settings.higgs, files: settings.mochiFiles !== false }); await applyMochi(parse(raw), q); }
     catch (err) { if (/Claude Code/.test(err.message)) { haveClaude = false; return offlineMochi(q, "I need Claude Code on this Mac to think. It's a one-time setup with your Claude account."); }
       if (SIGNIN.test(err.message)) { offlineMochi.signin = true; return offlineMochi(q, "Claude Code is here, but it isn't signed in yet. Open Terminal, type claude, and sign in with a Claude Pro or Max account."); }
       say("Hmm, I couldn't reach Claude: " + err.message); }
@@ -2500,13 +2886,15 @@
       await saveLib(); await refreshBoards();
     }
     const center = centerWorld(), added = []; let i = 0;
-    const place = o => { if (o.x == null || o.y == null) { const wide = o.type === 'font'; o.x = center.x - 300 + (i % 3) * (wide ? 330 : 250); o.y = center.y - 100 + Math.floor(i / 3) * (wide ? 240 : 170); i++; } };
+    const place = o => { if (o.x == null || o.y == null) { const wide = o.type === 'font', fl = o.type === 'file', fo = o.type === 'folder'; o.x = center.x - 300 + (i % 3) * (fo ? 500 : wide ? 330 : fl ? 260 : 250); o.y = center.y - 100 + Math.floor(i / 3) * (fo ? 420 : wide || fl ? 244 : 170); i++; } };
     // collections Mochi makes, and cards she files into them (by collection id, or by the name of one she just made)
     const made = {};
     (r.collections || []).forEach(o => { place(o); const s2 = card('coll', { x: o.x, y: o.y, text: o.name || o.text || '', color: COLL[o.color] ? o.color : 'pink', kids: [], cols: o.cols || 1, r: 0 }); addCard(s2); made[(o.name || '').toLowerCase()] = s2; added.push(s2); });
     const collFor = k => k && (byId(k)?.type === 'coll' ? byId(k) : made[String(k).toLowerCase()] || colls().find(s2 => s2.text.toLowerCase() === String(k).toLowerCase()));
     const file = (c, k) => { const s2 = collFor(k); if (!s2 || c.id === s2.id) return; const from = parentOf(c.id); if (from) from.kids = from.kids.filter(x => x !== c.id); s2.kids.push(c.id); };
-    (r.add || []).forEach(o => { place(o); const c = card(['todo', 'title', 'swatch', 'doc', 'font'].includes(o.type) ? o.type : 'note', { font: o.type === 'font' ? (o.font || o.text) : (o.font ? String(o.font) : undefined), body: o.type === 'doc' ? (o.body || '') : undefined,
+    (r.add || []).forEach(o => { if (o.type === 'image' && o.path && MB.native) { place(o); const c = card('image', { x: o.x, y: o.y, w: 260, h: 200, fileSrc: String(o.path), src: '' }); addCard(c); added.push(c); if (o.in) file(c, o.in); return; }
+      if ((o.type === 'file' || o.type === 'folder') && o.path) { place(o); const c = o.type === 'folder' ? folderCard(String(o.path), o.x, o.y) : fileCard(String(o.path), o.x, o.y); if (o.root && c.type === 'file') c.root = String(o.root); addCard(c); added.push(c); if (o.in) file(c, o.in); watchSoon(); return; }
+      place(o); const c = card(['todo', 'title', 'swatch', 'doc', 'font'].includes(o.type) ? o.type : 'note', { font: o.type === 'font' ? (o.font || o.text) : (o.font ? String(o.font) : undefined), body: o.type === 'doc' ? (o.body || '') : undefined,
       x: o.x, y: o.y, text: o.type === 'font' ? (o.sample || '') : o.text || '', color: COLOR_NAMES.includes(o.color) ? o.color : 'white', hex: o.hex, label: o.label,
       items: o.items ? o.items.map(t => ({ t: typeof t === 'string' ? t : t.t, done: false })) : undefined, tagText: o.tag, name: o.name }); addCard(c); added.push(c); if (o.in) file(c, o.in); });
     (r.titles || []).forEach(o => { place(o); added.push(addCard(card('title', { x: o.x, y: o.y, text: o.text }))); });
@@ -2519,6 +2907,7 @@
       if (o.body != null && c.type === 'doc') { c.body = o.body; c.doc = null; if (docCard === c && ed) ed.commands.setContent(mdToHTML(c.body), false); }
       if (o.items) c.items = o.items.map((t, k) => ({ t: typeof t === 'string' ? t : t.t, done: (typeof t === 'object' && t.done) || (c.items?.[k]?.t === t && c.items[k].done) || false }));
       if (o.color && COLOR_NAMES.includes(o.color)) c.color = o.color;
+      if (o.src && MB.native && ['box', 'image'].includes(c.type)) { if (c.type === 'box' && /\.(webm|mov|mp4|m4v)$/i.test(String(o.src))) { c.fileVideo = String(o.src); delete c.src; } else { c.fileSrc = String(o.src); delete c.video; } added.push(c); }   // swap in different art from their files
       if (o.tag !== undefined) { if (o.tag) c.tagText = o.tag; else delete c.tagText; }
       if (o.hex && /^#[0-9a-f]{6}$/i.test(o.hex)) c.hex = o.hex.toLowerCase();
       if (o.label != null) c.label = o.label;
@@ -2534,7 +2923,10 @@
       let sx = board.cards.length ? Math.max(...board.cards.map(c => c.x + c.w)) + 160 : center.x - 200, sy = board.cards.length ? Math.min(...board.cards.map(c => c.y)) : center.y - 400, prev = null;
       const builtFrames = []; r.screens.forEach(sp => { const { f, made } = buildScreen(sp, sx, sy); builtFrames.push(f); made.forEach(c => added.push(c)); if (prev && sp.flow !== false) board.links.push({ id: uid(), a: prev.id, b: f.id, arrow: true }); prev = f; sx += f.w + 140; });
     }
-    if (r.screens?.length) setTimeout(() => offerFill(spotsIn(board.cards.filter(c => c.type === 'frame').slice(-r.screens.length))), 1500);
+    if (r.screens?.length && !r.screens.some(sp => Array.isArray(sp.layers))) setTimeout(() => offerFill(spotsIn(board.cards.filter(c => c.type === 'frame').slice(-r.screens.length))), 1500);
+    const fixed = []; (Array.isArray(r.replace) ? r.replace : []).forEach(o => { const res = o && replaceScreen(o); if (res) { fixed.push(res.nf); res.made.forEach(c => added.push(c)); } });
+    const designed = r.screens?.some(sp => Array.isArray(sp.layers)) && !checking ? board.cards.filter(c => c.type === 'frame').slice(-r.screens.length) : [];
+    if (designed.length) setTimeout(() => checkWork(designed, q), 0);
     // pictures (Mobbin screens, Higgsfield images): fetched and saved into the board, laid out in a row of tilted cards
     const imgs = r.images || [];
     if (imgs.length) {
@@ -2549,14 +2941,34 @@
         } catch (e) {}
       }
     }
+    // file and folder cards she placed on top of each other get laid out in tidy rows (they're bigger than notes)
+    const fls = added.filter(c => c.type === 'file' || c.type === 'folder'), hit = (a, b) => a.x < b.x + b.w + 10 && b.x < a.x + a.w + 10 && a.y < b.y + b.h + 10 && b.y < a.y + a.h + 10;
+    if (fls.length > 1 && fls.some((a, k) => fls.slice(k + 1).some(b => hit(a, b)))) {
+      const x0 = Math.min(...fls.map(c => c.x)), y0 = Math.min(...fls.map(c => c.y)); let x = x0, y = y0, rowH = 0;
+      [...fls.filter(c => c.type === 'folder'), ...fls.filter(c => c.type === 'file')].forEach(c => { if (x > x0 && x + c.w > x0 + 1100) { x = x0; y += rowH + 30; rowH = 0; } c.x = x; c.y = y; x += c.w + 30; rowH = Math.max(rowH, c.h); renderCard(c); });
+    }
     layoutAll();
     renderTray(); renderWires(); save();
+    if (MB.native) { const art = [...added, ...board.cards.filter(c => c.fileSrc || c.fileVideo)].filter((c, k, a) => (c.fileSrc || c.fileVideo) && a.indexOf(c) === k); if (art.length) fillFileArt(art); }
     if (added.length) setTimeout(() => showWhatMochiMade(added), 250);
-    const acts = r.confirm ? [{ label: (r.confirm || 'Yes, make it') + ' ✦', run: () => ask(q, true) }, { label: 'Not now', ghost: true, run: () => {} }] : [];
+    const changed = r.settings && typeof r.settings === 'object' ? changeSettings(r.settings) : { done: [] };
+    // what she learns from corrections ("our logo is the 3D one") stays with the board, so she gets it right next time
+    [].concat(r.remember || []).filter(t => typeof t === 'string' && t.trim()).forEach(t => { board.mochiNotes = (board.mochiNotes || []).filter(x => x.toLowerCase() !== t.trim().toLowerCase()); board.mochiNotes.push(t.trim().slice(0, 300)); if (board.mochiNotes.length > 30) board.mochiNotes.shift(); });
+    if (r.connectAll && MB.native) { if (r.say) addMsg('mochi', r.say); return offerAllFiles(); }
+    if (Array.isArray(r.look) && r.look.length && MB.native && !lookedOnce) {   // she wants to see their pages before designing: photograph them, then ask her again
+      if (r.say) addMsg('mochi', r.say); lookedOnce = true; typing(true, 'looking at your game');
+      let sh = []; try { sh = (await MB.lookAt(r.look.map(String).slice(0, 3))) || []; } catch (e) {} typing(false);
+      pendingShots = sh.length ? sh : null;
+      try { await ask(q, false, true, sh.length ? '' : "I couldn't open those pages, so I'll go from what I know…"); } finally { lookedOnce = false; } return; }   // one look per ask, however long the answer takes
+    // she needs to see a folder: one tap connects it (or switches reading back on) and she tries again by herself
+    const needFolder = r.needFolder && MB.native && !acts0(r);
+    const acts = r.confirm ? [{ label: (r.confirm || 'Yes, make it') + ' ✦', run: () => ask(q, true) }, { label: 'Not now', ghost: true, run: () => {} }]
+      : needFolder ? [{ label: settings.mochiFiles === false && connected.length ? 'Let Mochi read my folders ✦' : `Connect ${String(r.needFolder).length < 28 && !/^(your )?(folder|files?)$/i.test(String(r.needFolder)) ? `“${String(r.needFolder)}”` : 'a folder'} ✦`, run: () => connectForMochi(q) }, { label: 'Not now', ghost: true, run: () => {} }] : [];
     // what next: Mochi's own ideas, or a sensible guess from what she just made
     const next = acts.length ? [] : (Array.isArray(r.next) && r.next.length ? r.next : guessNext(r, added)).filter(t => typeof t === 'string' && t.trim()).slice(0, 3);
     next.forEach(t => acts.push({ label: t.trim(), cls: 'next', run: () => ask(t.trim()) }));
-    say(r.say || (added.length ? `Done! I touched ${added.length} cards.` : 'Done!'), r.confirm ? 0 : next.length ? 16000 : 9000, acts);
+    if (changed.done.length) acts.unshift({ label: 'Undo', ghost: true, run: () => { changeSettings(changed.before); chirp('Back how it was ✦', 3000); } });
+    say(r.say || (added.length ? `Done! I touched ${added.length} cards.` : 'Done!'), r.confirm || needFolder ? 0 : next.length ? 16000 : 9000, acts);
   }
   function guessNext(r, added) {
     const has = t => added.some(c => c.type === t);
@@ -2784,7 +3196,7 @@
         ...(cs.length === 1 && cs[0].type === 'section' ? [{ label: 'Rename section', run: () => renameSection(cs[0]) }] : []),
         ...(cs.some(c => c.type === 'section') ? [{ label: 'Remove section', run: () => removeSection(cs.filter(c => c.type === 'section')) }] : []),
         ...(cs.some(c => TILTS(c) && Math.round(c.type === 'stamp' && !c.tilted ? 0 : c.r || 0)) ? [{ label: cs.length > 1 ? 'Reset tilts' : 'Reset tilt', run: () => { remember(); cs.filter(TILTS).forEach(c => { c.r = 0; c.tilted = true; renderCard(c); }); selectOnly(cs.map(c => c.id)); $('selbar').dataset.key = ''; save(); } }] : []),
-        ...maskMenuItems(cs), ...tableMenu(cs, e),
+        ...fileMenu(cs), ...maskMenuItems(cs), ...tableMenu(cs, e),
         ...(cs.some(c => SIZED.includes(c.type)) ? [{ label: 'Save text style', run: () => saveTextStyle(cs.find(c => SIZED.includes(c.type))) },
           ...(board.styles.text.length ? [{ label: 'Text style', sub: board.styles.text.map(st => ({ label: esc(st.name), run: () => applyTextStyle(st, cs) })) }] : [])] : []),
         { label: 'Arrange', sub: arrangeSub() }, '-',
@@ -2796,6 +3208,8 @@
         { label: 'Duplicate', run: () => { remember(); const gm = {}, copies = withMaskGroups(cs).filter(c => c.type !== 'coll').map(c => Object.assign(JSON.parse(JSON.stringify(c)), { id: uid(), r: tilt(), x: c.x + 30, y: c.y + 30 })); copies.forEach(c => { if (c.group) c.group = gm[c.group] || (gm[c.group] = uid()); }); copies.forEach(c => addCard(c)); selectOnly(copies.map(c => c.id)); } },
         { label: 'Delete', danger: true, run: () => removeSelected() }]);
     } else boardMenu(e, [
+      ...(MB.native ? [{ label: 'Put a file here…', run: () => pickPut(toWorld(e.clientX, e.clientY)) },
+        connected.some(f => !f.missing) ? { label: 'Show a folder here', sub: connected.filter(f => !f.missing).map(f => ({ label: esc(f.name), run: () => putFolderCard(f, toWorld(e.clientX, e.clientY)) })) } : { label: 'Connect a folder…', run: connectFolder }, '-'] : []),
       { label: 'Background color…', run: () => tintPicker('bg', { x: e.clientX + 12, y: e.clientY - 40 }, true) },
       ...(board.bg ? [{ label: 'Use the default background', run: () => { delete board.bg; save(); applyColors(); } }] : []),
       '-',
@@ -2808,6 +3222,15 @@
   const fmtT = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
   const live = new Map();     // card id → { recorder, stream, timer, ... } while recording
   const players = new Map();  // card id → Audio
+  // a memo that leaves the board (deleted, cut, undone, or another board opened) stops playing, and a recording in progress lets go of the mic
+  function stopGone() {
+    const here = new Set(board.cards.map(c => c.id));
+    players.forEach((p, id) => { if (!here.has(id)) { p.pause(); p.removeAttribute('src'); p.load(); players.delete(id); } });
+    live.forEach((L, id) => { if (!here.has(id)) { L.gone = true; live.delete(id); try { L.recorder.state !== 'inactive' ? L.recorder.stop() : 0; } catch (e) {} L.stream.getTracks().forEach(t => t.stop()); try { L.ac.close(); } catch (e) {} } });
+  }
+  // every way a card can leave (Delete, cut, undo, Mochi, tidying, opening another board) takes it off the page, so watch for that
+  let goneSoon = 0;
+  new MutationObserver(ms => { if ((!players.size && !live.size) || goneSoon || !ms.some(m => m.removedNodes.length)) return; goneSoon = requestAnimationFrame(() => { goneSoon = 0; stopGone(); }); }).observe(cardsEl, { childList: true, subtree: true });
   const MIC = '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="2.5" width="5" height="9.5" rx="2.5"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5"/></svg>';
   function fitAudio(c, el) { const b = el.querySelector('.body'); if (!b) return; b.style.height = 'auto'; const h = Math.max(150, b.offsetHeight); b.style.height = ''; if (Math.abs(h - c.h) > 2) { c.h = h; el.style.height = h + 'px'; renderWires(); } }
   // the first time someone picks the voice memo tool, ask for the mic (and speech) right then; macOS remembers the answer
@@ -2964,6 +3387,7 @@
     recorder.onstart = () => { c.starting = false; L.start = Date.now(); renderCard(c); };   // only say "Recording…" once it's really listening
     recorder.ondataavailable = e => chunks.push(e.data);
     recorder.onstop = async () => {
+      if (L.gone) return;   // the card was deleted while it was recording: nothing to keep
       stream.getTracks().forEach(t => t.stop()); ac.close(); live.delete(c.id);
       const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/mp4' }), url = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
       let wave = [], dur = (Date.now() - L.start - L.paused) / 1000;
@@ -2995,10 +3419,11 @@
     })();
   }
   // a video's sound, as a plain 16 kHz mono WAV: what the Mac's speech recognizer and Whisper both read
+  // voice memos go through it too: the Mac's recognizer only heard the last few seconds of the recorder's own fragmented .mp4
   async function videoAudio(c) {
     let buf;
-    try { const ab = await (await fetch(await MB.mediaURL(c.src))).arrayBuffer(), ac = new (window.AudioContext || window.webkitAudioContext)(); buf = await ac.decodeAudioData(ab); ac.close?.(); }
-    catch (e) { throw new Error('This video has no sound to write out.'); }
+    try { const ab = await (await fetch(c.type === 'video' ? await MB.mediaURL(c.src) : c.src)).arrayBuffer(), ac = new (window.AudioContext || window.webkitAudioContext)(); buf = await ac.decodeAudioData(ab); ac.close?.(); }
+    catch (e) { throw new Error(c.type === 'video' ? 'This video has no sound to write out.' : "I couldn't read that recording."); }
     const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(buf.duration * 16000)), 16000), s = off.createBufferSource(); s.buffer = buf; s.connect(off.destination); s.start();
     const pcm = (await off.startRendering()).getChannelData(0), n = pcm.length, out = new DataView(new ArrayBuffer(44 + n * 2));
     const str = (o, t) => [...t].forEach((ch, i) => out.setUint8(o + i, ch.charCodeAt(0)));
@@ -3010,7 +3435,7 @@
   }
   async function transcribe(c, asked) {
     if (MB.whisperStatus) { c.txNote = 'Mochi is writing it out…'; renderCard(c); }
-    try { const text = await MB.transcribe(c.type === 'video' ? await videoAudio(c) : c.src); c.text = (text || '').trim(); c.txNote = c.text ? '' : "I couldn't make out any words in that one."; }
+    try { const text = await MB.transcribe(await videoAudio(c)); c.text = (text || '').trim(); c.txNote = c.text ? '' : "I couldn't make out any words in that one."; }
     catch (e) {
       if (e.message === 'NEED_WHISPER') { c.txNote = 'Not written out yet.'; c.needTx = true; renderCard(c); save(); offerWhisper(asked); return; }
       c.txNote = e.message; }
@@ -3215,7 +3640,7 @@
       : [B(0, 0, 52, 30, { fill: '#27272a', radius: 15 }), B(25, 3, 24, 24, { fill: '#ffffff', radius: 12 })] },
     'Checkbox': { icon: 'check_box', w: 240, make: (W, o = {}) => [B(0, 0, 22, 22, { fill: o.on === false ? '#ffffff' : '#27272a', stroke: '#27272a', sw: 1.5, radius: 6 }), ...(o.on === false ? [] : [IC(1, 1, 'check', 20, { color: '#ffffff' })]), T(32, 2, W - 32, o.text || 'Remember me')] },
     'Avatar': { icon: 'account_circle', w: 56, make: (W, o = {}) => { const s = o.size || 56; return [B(0, 0, s, s, { radius: s / 2 }), IC(s / 4, s / 4, 'person', s / 2, { color: '#a1a1aa' })]; } },
-    'Image': { icon: 'image', w: 300, make: (W, o = {}) => { const h = o.h || 180; return o.img ? [PH(0, 0, W, h, o.img, { radius: 12 })] : [B(0, 0, W, h, { radius: 12 }), IC(W / 2 - 16, h / 2 - 16, o.icon || 'image', 32, { color: '#a1a1aa' })]; } },
+    'Image': { icon: 'image', w: 300, make: (W, o = {}) => { const h = o.h || 180; if (o.src && MB.native) return [B(0, 0, W, h, { radius: o.radius ?? 12, ...(/\.(webm|mov|mp4|m4v)$/i.test(String(o.src)) ? { fileVideo: String(o.src) } : { fileSrc: String(o.src) }), fill: 'transparent', nobg: true })]; /* their own art sits whole inside the spot (logos and cut-outs aren't cropped) */ return o.img ? [PH(0, 0, W, h, o.img, { radius: 12 })] : [B(0, 0, W, h, { radius: 12 }), IC(W / 2 - 16, h / 2 - 16, o.icon || 'image', 32, { color: '#a1a1aa' })]; } },
     'Heading': { icon: 'title', w: 300, make: (W, o = {}) => [T(0, 0, W, o.text || o.title || 'Heading', { size: o.size || 28, weight: 800, align: o.align || 'left' }), ...(o.sub === '' ? [] : [T(0, (o.size || 28) * 1.3 + 6, W, o.sub || 'A little line underneath it.', { size: 15, color: '#71717a', align: o.align || 'left' })])] },
   };
   const PH = (x, y, w, h, label, o = {}) => ({ ...B(x, y, w, h, { radius: 16, ...o }), img: label || 'Image' });
@@ -3277,6 +3702,10 @@
   const pieceH = (items, o) => Math.max(o.h && !items.length ? o.h : 0, ...items.map(i => i.y + i.h));
   // a whole screen from a list of pieces, top to bottom: bars hug the edges, the rest stacks with even gaps
   const num = (v, d) => { const n = +v; return Number.isFinite(n) && v !== '' && v !== null ? n : d; };
+  // "4 4 0 #141210" or {x, y, blur, color} → a card shadow (a hard ink shadow is blur 0)
+  function layerShadow(v) { if (!v) return null; if (typeof v === 'string') { const m = v.trim().match(/^(-?[\d.]+)(?:px)?\s+(-?[\d.]+)(?:px)?(?:\s+([\d.]+)(?:px)?)?(?:\s+(#[0-9a-f]{3,8}|rgba?\([^)]*\)))?/i); if (!m) return null; v = { x: +m[1], y: +m[2], blur: +(m[3] || 0), color: m[4] || '#000000' }; }
+    const col = String(v.color || '#000000'), hex = /^#[0-9a-f]{6}$/i.test(col) ? col : /^#[0-9a-f]{3}$/i.test(col) ? '#' + col.slice(1).split('').map(ch => ch + ch).join('') : '#000000';
+    return { x: +v.x || 0, y: +v.y || 0, blur: +v.blur || 0, color: hex, a: v.a != null ? +v.a : v.opacity != null ? +v.opacity : 1 }; }
   function buildScreen(spec, x, y) {
     spec = { ...spec, w: num(spec.w, undefined), h: num(spec.h, undefined), gap: num(spec.gap, undefined) };
     spec.items = (Array.isArray(spec.items) ? spec.items : []).filter(it => it && typeof it === 'object').map(it => ({ ...it, w: num(it.w, undefined), h: num(it.h, undefined), size: num(it.size, undefined), count: num(it.count, undefined) }));
@@ -3284,6 +3713,24 @@
     const f = card('frame', { x, y, w: W, h: spec.h || (webFirst && spec.device === 'Desktop' ? 600 : dev[1]), r: 0, name: spec.name || 'Screen', device: DEVICES[spec.device] ? spec.device : 'iPhone', radius: webFirst ? 12 : dev[2], fill: '#ffffff' });
     board.cards.push(f); renderCard(f, true);
     const items = spec.items || [], M = spec.device === 'Desktop' ? 64 : 24, CW = W - M * 2, GAP = spec.gap || 16, made = [f];
+    // a designed screen: layers placed exactly where Mochi put them (their art, panels, text, real buttons with outlines and hard shadows), like a design file, not a stack of stock pieces
+    if (Array.isArray(spec.layers) && spec.layers.length) {
+      if (spec.theme?.bg || spec.bg) { f.fill = spec.bg || spec.theme.bg; renderCard(f); }
+      const add = (o, g) => { const c = card(o.type, { ...o, x: x + o.x, y: y + o.y, r: 0, onFrame: f.id, ...(g ? { group: g } : {}) }); board.cards.push(c); renderCard(c, true); made.push(c); return c; };
+      spec.layers.forEach(L => { if (!L || typeof L !== 'object') return; const k = String(L.kind || L.type || '').toLowerCase(), n = v => num(v, 0);
+        const lx = n(L.x), ly = n(L.y), lw = Math.max(4, n(L.w) || 200), lh = Math.max(4, n(L.h) || 60), sh = layerShadow(L.shadow), sk = L.stroke && n(L.strokeWidth ?? L.sw) > 0 ? { stroke: L.stroke, sw: n(L.strokeWidth ?? L.sw) } : {};
+        if ((k === 'video' || (k === 'art' && /\.(webm|mov|mp4|m4v)$/i.test(String(L.src || '')))) && MB.native) add({ type: 'box', x: lx, y: ly, w: lw, h: lh, radius: n(L.radius), fill: 'transparent', nobg: true, fileVideo: String(L.src || ''), name: L.name || undefined });
+        else if (k === 'art' || k === 'image') add({ type: 'box', x: lx, y: ly, w: lw, h: lh, radius: n(L.radius), fill: 'transparent', nobg: true, ...(L.src && MB.native ? { fileSrc: String(L.src) } : { img: L.img || L.label || 'Picture' }), ...(sh ? { shadow: sh } : {}), name: L.name || undefined });
+        else if (k === 'text') { useFont(L.font); add({ type: 'text', x: lx, y: ly, w: lw, h: Math.round((n(L.size) || 18) * 1.35), text: String(L.text || ''), font: L.font || spec.theme?.font, size: n(L.size) || 18, weight: n(L.weight) || 500, color: L.color || spec.theme?.text || '#27272a', align: L.align || 'left', ...(L.lh ? { lh: n(L.lh) } : {}), ...sk }); }
+        else if (k === 'button') { const g = uid(), size = n(L.size) || 18; useFont(L.font);
+          add({ type: 'box', x: lx, y: ly, w: lw, h: lh, fill: L.fill || spec.theme?.primary || '#18181b', radius: L.radius != null ? n(L.radius) : lh / 2, ...sk, ...(sh ? { shadow: sh } : {}) }, g);
+          add({ type: 'text', x: lx, y: ly + Math.round((lh - size * 1.3) / 2), w: lw, h: Math.round(size * 1.3), text: String(L.text || 'Button'), font: L.font || spec.theme?.headFont || spec.theme?.font, size, weight: n(L.weight) || 800, color: L.color || spec.theme?.onPrimary || '#ffffff', align: 'center', lh: 1.3 }, g); }
+        else if (k === 'icon') add({ type: 'icon', x: lx, y: ly, w: n(L.size) || lw, h: n(L.size) || lw, name: L.name || 'star', color: L.color || spec.theme?.text });
+        else add({ type: 'box', x: lx, y: ly, w: lw, h: lh, fill: L.fill || 'transparent', radius: n(L.radius), opacity: L.opacity != null ? n(L.opacity) : undefined, ...sk, ...(sh ? { shadow: sh } : {}) });   // rect / panel / shape
+      });
+      if (spec.note) { const nt = card('note', { x, y: y + f.h + 28, w: W, h: 120, text: spec.note, name: spec.name || '', color: 'butter', r: 0 }); board.cards.push(nt); renderCard(nt, true); made.push(nt); }
+      return { f, made };
+    }
     let top = y + (phone ? 44 : 0), bottom = y + f.h;
     const put = (list, ox, oy) => { const g = uid(); list.forEach(it => { const c = card(it.type, { ...it, x: ox + it.x, y: oy + it.y, r: 0, group: list.length > 1 ? g : undefined, onFrame: f.id }); if (!c.group) delete c.group; board.cards.push(c); renderCard(c, true); made.push(c); }); };
     const nav = items.find(it => /nav/i.test(it.piece || '')), tab = items.find(it => /tab/i.test(it.piece || ''));
@@ -3945,6 +4392,10 @@
     if (scene) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); const c = picUnder(e); if (c) placeholderOnto(c, scene); else { const w = toWorld(e.clientX, e.clientY); addSpot(scene, w.x - 150, w.y - 112); } return; }
     const files = [...(e.dataTransfer?.files || [])].filter(f => f.type.startsWith('image/')); if (files.length !== 1) return;
     const c = picUnder(e); if (!c) return; e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); putPicture(c, await imageFromFile(files[0])); }, true);
+  // folder cards: drag what's inside out onto the board, and scroll the list once the card is selected (otherwise the wheel moves the board as usual)
+  cardsEl.addEventListener('pointerdown', foDragStart, true);
+  stage.addEventListener('wheel', e => { const l = e.target.closest?.('.fo-list'); if (!l || e.ctrlKey || e.metaKey) return; const el = l.closest('.card');
+    if (!el || !sel.has(el.dataset.id) || l.scrollHeight <= l.clientHeight + 1) return; e.stopImmediatePropagation(); }, { capture: true, passive: true });
   cardsEl.addEventListener('contextmenu', e => { const el = e.target.closest('.card'); const c = el && byId(el.dataset.id); if (!isPic(c)) return; if (sel.size > 1 && sel.has(c.id)) return; e.preventDefault(); e.stopPropagation(); selectOnly([c.id]); pictureMenu(c, e.clientX, e.clientY); }, true);
   // (a plain click on a placeholder just selects it; the menu is on right-click, or Replace… in the bar)
   $('selbar').addEventListener('click', e => { const b = e.target.closest('[data-pic]'); if (!b) return; e.stopImmediatePropagation(); const c = selCards()[0]; if (!c) return; const r = b.getBoundingClientRect(); pictureMenu(c, r.left, r.top, true); }, true);
@@ -5402,7 +5853,7 @@ ${proseCSS()}
     const CARET = '<svg class="sb-caret" viewBox="0 0 12 12"><path d="M3 4.5l3 3 3-3"/></svg>';
     const colorPop = (cur, dots) => pop('color', `<i class="sb-cur" style="background:${cur}"></i>${CARET}`, `<div class="sb-dots">${dots}</div>`, 'Color');
     let more = '';
-    let h = `<span class="sb-label">${one ? ({ section: 'Section', note: 'Note', todo: 'Checklist', table: 'Table', title: 'Title', image: 'Image', link: 'Link', swatch: 'Color', coll: 'Collection', doc: 'Doc', canvas: 'Canvas', shape: 'Shape', path: 'Pen shape', stamp: 'Stamp', audio: 'Voice memo', video: 'Video', spotify: 'Spotify', ink: 'Drawing', frame: 'Screen', box: 'Box', text: 'Text', font: 'Font' }[one.type] || 'Card') : cs.length + ' selected'}</span>`;
+    let h = `<span class="sb-label">${one ? ({ section: 'Section', file: 'File', folder: 'Folder', note: 'Note', todo: 'Checklist', table: 'Table', title: 'Title', image: 'Image', link: 'Link', swatch: 'Color', coll: 'Collection', doc: 'Doc', canvas: 'Canvas', shape: 'Shape', path: 'Pen shape', stamp: 'Stamp', audio: 'Voice memo', video: 'Video', spotify: 'Spotify', ink: 'Drawing', frame: 'Screen', box: 'Box', text: 'Text', font: 'Font' }[one.type] || 'Card') : cs.length + ' selected'}</span>`;
     if (cs.length > 1) { const A = [['left', 'Align left edges'], ['hcenter', 'Align centers'], ['right', 'Align right edges'], ['top', 'Align tops'], ['vcenter', 'Align middles'], ['bottom', 'Align bottoms']];
       if (cs.length > 2) A.push(['dh', 'Space evenly across'], ['dv', 'Space evenly down']);
       h += G(0, `<div class="sb-sizes sb-style sb-arrange">${A.map(([k, t], i) => (i === 3 || i === 6 ? '<i class="sb-gap"></i>' : '') + `<button data-arr="${k}" title="${t}"><svg viewBox="0 0 24 24">${ARRANGE_IC[k]}</svg></button>`).join('')}</div>`); }
@@ -6131,11 +6582,18 @@ ${proseCSS()}
     ['<path d="M3 6.5h14v9.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 16z"/><path d="M2 3.5h16v3H2zM8 10h4"/>', 'Archive projects', 'Right-click a project → Archive to tuck it away. Archived, at the bottom of your projects, brings it back.'],
     ['<circle cx="6" cy="6" r="2.5"/><circle cx="14" cy="6" r="2.5"/><circle cx="6" cy="14" r="2.5"/><circle cx="14" cy="14" r="2.5"/>', 'Color your canvases', 'Click the dot beside a board, folder or project to give it a color, so a project reads at a glance.'],
     ['<path d="M3 5.5h14v9H8l-4 3v-3H3z"/><path d="M10 12.2c-.1 0-.2 0-.3-.1-.8-.7-1.9-1.4-1.9-2.4 0-.6.5-1.1 1.1-1.1.5 0 .9.2 1.1.6.2-.4.6-.6 1.1-.6.6 0 1.1.5 1.1 1.1 0 1-1.1 1.7-1.9 2.4-.1.1-.2.1-.3.1z"/>', 'Tell Jessa', 'Right-click Mochi → Send feedback, or tell her “tell Jessa…”. You see exactly what goes out first, and Settings → About has a little Support Mochi ♡ too.'],
+  ], '1.10.0': [
+    ['<path d="M2.5 5.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2h6a1.5 1.5 0 0 1 1.5 1.5v7.5a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5z"/>', 'Your files, on the board', 'Connect a folder (or all your files) in Settings → General, or just drag one in. Folder cards stay live, and file cards show a real preview.'],
+    ['<path d="M10 3.5l1.6 4.2 4.4.3-3.4 2.8 1.1 4.3L10 12.7l-3.7 2.4 1.1-4.3L4 8l4.4-.3z"/>', 'Mochi reads them', 'Ask “what’s in this folder?” or “sum up this file”. Read-only, only folders you’ve connected, and you can switch it off.'],
+    ['<rect x="3" y="4" width="14" height="12" rx="2"/><path d="M8.5 7.5v5l4-2.5z"/>', 'Play your games', 'An .html file card has a ▶ Play button: Mochiboard runs it on this computer and opens it in your browser, no Terminal needed.'],
+    ['<path d="M4 16l2.5-.6 8.6-8.6a1.4 1.4 0 0 0-2-2L4.5 13.4z"/><path d="M11.5 6.5l2 2"/>', 'Mochi designs in your style', 'Ask for a start screen or a menu: she looks at your real pages, reads your colors and fonts, and builds it with your own art. Animated .webm logos play right on the board.'],
+    ['<circle cx="10" cy="10" r="2.5"/><path d="M10 3v2M10 15v2M3 10h2M15 10h2M5 5l1.4 1.4M13.6 13.6 15 15M5 15l1.4-1.4M13.6 6.4 15 5"/>', 'Ask Mochi to change settings', '“Turn on dark mode”, “hide the dot grid”, “make yourself pink”. She says what she changed, with an Undo.'],
+    ['<path d="M5.5 14.5a3.5 3.5 0 0 1-.3-7 5 5 0 0 1 9.6 1.2 3 3 0 0 1-.3 5.8z"/>', 'Boards anywhere, memos in full', 'Keep your boards in Dropbox or iCloud Drive (Settings → General → Your boards), and voice memos are now written out in full.'],
   ] };
   // ideas from people that shipped, thanked by name on that version's card: [what, name, role]. New ones come from the "thank me by name" box in feedback
   const NEWS_CREDITS = { '1.7.0': [['Calm modes', 'Nikunj Tyagi', 'Product Designer']] };
   // the button on each version's card: try the headline thing
-  const NEWS_TRY = { '1.9.0': ['Make a table', () => startPlacing('table')], '1.1.0': ['Try a template', () => $('tools').querySelector('[data-add="tpl"]').click()], '1.2.0': ['Make it yours', () => { $('gearBtn').click(); setTab('board'); setTimeout(() => $('settings').querySelector('.col-grid')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 120); }], '1.3.0': ['Write a doc', () => openDoc(addAtCenter('doc', { text: 'My first real doc' }))], '1.4.0': ['Record a video', () => startPlacing('video')], '1.5.0': ['Pick your camera', () => { $('gearBtn').click(); setTab('general'); setTimeout(() => $('settings').querySelector('.set-devices')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 120); }] };
+  const NEWS_TRY = { '1.10.0': ['Connect a folder', () => { $('gearBtn').click(); setTab('general'); setTimeout(() => $('cfAdd')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 120); }], '1.9.0': ['Make a table', () => startPlacing('table')], '1.1.0': ['Try a template', () => $('tools').querySelector('[data-add="tpl"]').click()], '1.2.0': ['Make it yours', () => { $('gearBtn').click(); setTab('board'); setTimeout(() => $('settings').querySelector('.col-grid')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 120); }], '1.3.0': ['Write a doc', () => openDoc(addAtCenter('doc', { text: 'My first real doc' }))], '1.4.0': ['Record a video', () => startPlacing('video')], '1.5.0': ['Pick your camera', () => { $('gearBtn').click(); setTab('general'); setTimeout(() => $('settings').querySelector('.set-devices')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 120); }] };
   // a bigger update walks through extra steps: [title, subtitle] for each, after the list
   const NEWS_STEPS = { '1.6.0': [['Two new widgets, if you’d like them', 'They’re off until you switch them on.'], ['Find them anytime', 'Settings → Widgets turns any widget on or off.']] };
   let nwStep = 0, nwSteps = null, nwHead = null, nwGooT = 0;
