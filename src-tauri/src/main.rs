@@ -60,7 +60,14 @@ async fn mb(app: tauri::AppHandle, op: String, args: Value) -> Result<Value, Str
             std::fs::rename(&tmp, &f).map_err(|e| e.to_string())?; Ok(json!(true))
         }
         "folders" => Ok(std::fs::read_to_string(root().join("folders.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(json!([]))),
-        "saveFolders" => { std::fs::write(root().join("folders.json"), serde_json::to_vec(a.get("folders").unwrap_or(&json!([]))).unwrap()).map_err(|e| e.to_string())?; Ok(json!(true)) }
+        "saveFolders" => {
+            let f = root().join("folders.json");
+            let tmp = f.with_extension("json.tmp");
+            let bytes = serde_json::to_vec(a.get("folders").unwrap_or(&json!([]))).map_err(|e| e.to_string())?;
+            std::fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+            std::fs::rename(&tmp, &f).map_err(|e| e.to_string())?;
+            Ok(json!(true))
+        }
         "remove" => { let _ = std::fs::remove_file(boards_dir().join(format!("{}.json", safe(a.get("id"))))); Ok(json!(true)) }
         // the web
         "linkPreview" => Ok(link_preview(s(a, "url")).await),
@@ -195,7 +202,17 @@ async fn mb(app: tauri::AppHandle, op: String, args: Value) -> Result<Value, Str
 fn or<'a>(v: &'a str, d: &'a str) -> &'a str { if v.is_empty() { d } else { v } }
 
 // ---------- link previews: the page's title, description and picture ----------
-fn client() -> reqwest::Client { reqwest::Client::builder().user_agent("Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Mochiboard").timeout(Duration::from_secs(15)).build().unwrap() }
+static HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+fn client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .user_agent("Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Mochiboard")
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(15))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    })
+}
 async fn link_preview(u: &str) -> Value {
     let host = reqwest::Url::parse(u).ok().and_then(|x| x.host_str().map(String::from)).unwrap_or_else(|| u.to_string());
     let html = match client().get(u).send().await { Ok(r) => r.text().await.unwrap_or_default(), Err(_) => String::new() };
@@ -379,7 +396,7 @@ async fn update_now(app: &tauri::AppHandle) -> Result<String, String> {
     let bytes = client().get(url).timeout(Duration::from_secs(600)).send().await.map_err(|e| e.to_string())?.bytes().await.map_err(|e| e.to_string())?;
     let f = std::env::temp_dir().join(format!("mochiboard-update-{}.exe", uuid::Uuid::new_v4()));
     std::fs::write(&f, &bytes).map_err(|e| e.to_string())?;
-    std::process::Command::new(&f).arg("/P").spawn().map_err(|e| e.to_string())?;   // /P: the installer's quiet mode, just a progress bar
+    if let Err(e) = std::process::Command::new(&f).arg("/P").spawn() { let _ = std::fs::remove_file(&f); return Err(e.to_string()); }   // /P: the installer's quiet mode, just a progress bar
     let h = app.clone(); tokio::spawn(async move { tokio::time::sleep(Duration::from_millis(400)).await; h.exit(0); });
     Ok("updating".into())
 }
@@ -554,7 +571,14 @@ async fn serve_file(path: &str, root: &str) -> Result<Value, String> {
 async fn answer(mut sock: tokio::net::TcpStream, root: PathBuf, port: u16) -> std::io::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut buf = vec![]; let mut chunk = [0u8; 8192];
-    loop { let n = sock.read(&mut chunk).await?; if n == 0 { return Ok(()); } buf.extend_from_slice(&chunk[..n]); if buf.windows(4).any(|w| w == b"\r\n\r\n") || buf.len() > 1_000_000 { break; } }
+    loop {
+        let n = tokio::time::timeout(Duration::from_secs(10), sock.read(&mut chunk))
+            .await
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "read timeout"))??;
+        if n == 0 { return Ok(()); }
+        buf.extend_from_slice(&chunk[..n]);
+        if buf.windows(4).any(|w| w == b"\r\n\r\n") || buf.len() > 1_000_000 { break; }
+    }
     let head = String::from_utf8_lossy(&buf).to_string(); let mut lines = head.split("\r\n"); let first: Vec<&str> = lines.next().unwrap_or("").split(' ').collect();
     let send = |status: &str, ctype: &str, body: Vec<u8>, extra: String| format!("HTTP/1.1 {status}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\n{extra}\r\n", body.len()).into_bytes().into_iter().chain(body).collect::<Vec<u8>>();
     if first.len() < 2 || (first[0] != "GET" && first[0] != "HEAD") { return sock.write_all(&send("405 Method Not Allowed", "text/plain", vec![], String::new())).await; }

@@ -32,18 +32,26 @@
     if (!blob) return ''; const u = URL.createObjectURL(blob); blobURLs.set(src, u); return u; }
   // the web demo: a real website (or ?web) can't reach Claude Code, Mobbin or Higgsfield on the visitor's computer
   const web = !native && !tauri && (!/^(localhost|127\.0\.0\.1|\[::1\]|)$/.test(location.hostname) || /[?&]web\b/.test(location.search));
+  const safeLS = {
+    get(k, fallback = null) { try { return localStorage.getItem(k); } catch { return fallback; } },
+    set(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { console.warn('[SafeStorage]', k, e); return false; } },
+    del(k) { try { localStorage.removeItem(k); } catch {} },
+    json(k, fallback) { try { const s = this.get(k); return s ? JSON.parse(s) : fallback; } catch { return fallback; } }
+  };
   const browser = {
-    async list() { return JSON.parse(localStorage.getItem(LS + 'index') || '[]'); },
-    async load(id) { const s = localStorage.getItem(LS + 'board:' + id); return s ? JSON.parse(s) : null; },
+    async list() { return safeLS.json(LS + 'index', []); },
+    async load(id) { return safeLS.json(LS + 'board:' + id, null); },
     async save(board) {
-      localStorage.setItem(LS + 'board:' + board.id, JSON.stringify(board));
-      const idx = JSON.parse(localStorage.getItem(LS + 'index') || '[]').filter(b => b.id !== board.id);
+      if (!safeLS.set(LS + 'board:' + board.id, JSON.stringify(board))) {
+        throw new Error('Browser storage is full or disabled.');
+      }
+      const idx = safeLS.json(LS + 'index', []).filter(b => b.id !== board.id);
       idx.unshift({ id: board.id, name: board.name, color: board.color, folder: board.folder || null, parent: board.parent || null, updated: Date.now() });
-      localStorage.setItem(LS + 'index', JSON.stringify(idx)); return true;
+      safeLS.set(LS + 'index', JSON.stringify(idx)); return true;
     },
-    async folders() { return JSON.parse(localStorage.getItem(LS + 'folders') || '[]'); },
-    async saveFolders(folders) { localStorage.setItem(LS + 'folders', JSON.stringify(folders)); return true; },
-    async remove(id) { localStorage.removeItem(LS + 'board:' + id); localStorage.setItem(LS + 'index', JSON.stringify(JSON.parse(localStorage.getItem(LS + 'index') || '[]').filter(b => b.id !== id))); return true; },
+    async folders() { return safeLS.json(LS + 'folders', []); },
+    async saveFolders(folders) { return safeLS.set(LS + 'folders', JSON.stringify(folders)); },
+    async remove(id) { safeLS.del(LS + 'board:' + id); safeLS.set(LS + 'index', JSON.stringify(safeLS.json(LS + 'index', []).filter(b => b.id !== id))); return true; },
     web, getURL: 'https://github.com/jessawolfe-ux/mochiboard/releases/latest/download/Mochiboard.zip',
     async connections() { return { claude: false, mobbin: false, higgsfield: false, browser: true, web }; },
     async usage() { return null; }, async resetUsage() { return true; }, async version() { return null; },
@@ -64,7 +72,11 @@
       document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000); return `${name}.${ext}`; },
     // in a browser: print the doc in a hidden frame, and the browser's own "Save as PDF" does the rest
     async docPDF(html) { const f = document.createElement('iframe'); f.style.cssText = 'position:fixed;width:0;height:0;border:0;opacity:0'; document.body.appendChild(f);
-      f.srcdoc = html.replace(/__WEB__\//g, location.href.replace(/[^/]*$/, '')); await new Promise(r => f.onload = r); await f.contentDocument.fonts?.ready; f.contentWindow.focus(); f.contentWindow.print(); setTimeout(() => f.remove(), 60000); return ''; },
+      try {
+        f.srcdoc = html.replace(/__WEB__\//g, location.href.replace(/[^/]*$/, ''));
+        await new Promise((res, rej) => { const t = setTimeout(() => rej(new Error('Print frame timed out')), 10000); f.onload = () => { clearTimeout(t); res(); }; f.onerror = () => { clearTimeout(t); rej(new Error('Print frame failed')); }; });
+        await f.contentDocument?.fonts?.ready; f.contentWindow?.focus(); f.contentWindow?.print(); return '';
+      } finally { setTimeout(() => f.remove(), 60000); } },
     async connected() { return []; }, async connectFolder() { throw new Error('Connecting folders works in the Mac app'); }, async connectAll() { throw new Error('Connecting your files works in the Mac app'); }, async connectPaths() { throw new Error('Connecting folders works in the Mac app'); }, async disconnectFolder() { return []; }, async revealConnected() {},
     async listFolder() { throw new Error('Folders from your computer show up in the Mac and Windows apps'); }, async fileInfo() { return {}; }, async fileThumb() { throw new Error('no preview'); },
     async openFile() { throw new Error('Opening files works in the Mac and Windows apps'); }, async serveFile() { throw new Error('Playing web pages works in the Mac and Windows apps'); }, async lookAt() { return []; }, async snapRect() { throw new Error('no photo'); }, async readImage() { throw new Error('Pictures from your files come in through the Mac and Windows apps'); }, async videoURL() { throw new Error('Videos from your files play in the Mac and Windows apps'); }, async revealFile() { throw new Error('Showing files works in the Mac and Windows apps'); }, async pickFiles() { return []; }, async watchPaths() { return false; },

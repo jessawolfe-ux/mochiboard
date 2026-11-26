@@ -19,27 +19,33 @@ fn ready() -> bool { std::fs::metadata(model()).map_or(false, |m| m.len() > MODE
 pub fn status() -> Value {
     let (got, total) = (GOT.load(Relaxed), TOTAL.load(Relaxed));
     json!({ "ready": ready(), "downloading": DOWNLOADING.load(Relaxed), "progress": if total > 0 { got as f64 / total as f64 } else { 0.0 },
-            "error": FAILED.lock().unwrap().clone(), "sizeMB": 142 })
+            "error": FAILED.lock().unwrap_or_else(|e| e.into_inner()).clone(), "sizeMB": 142 })
 }
 
 pub fn download() {
     if ready() || DOWNLOADING.swap(true, Relaxed) { return; }
-    *FAILED.lock().unwrap() = None; GOT.store(0, Relaxed); TOTAL.store(0, Relaxed);
+    *FAILED.lock().unwrap_or_else(|e| e.into_inner()) = None; GOT.store(0, Relaxed); TOTAL.store(0, Relaxed);
     tauri::async_runtime::spawn(async {
         let r = fetch().await;
-        if let Err(e) = r { *FAILED.lock().unwrap() = Some(e); }
+        if let Err(e) = r { *FAILED.lock().unwrap_or_else(|e| e.into_inner()) = Some(e); }
         DOWNLOADING.store(false, Relaxed);
     });
 }
 async fn fetch() -> Result<(), String> {
     use tokio::io::AsyncWriteExt;
-    let dir = model().parent().unwrap().to_path_buf(); tokio::fs::create_dir_all(&dir).await.map_err(|e| e.to_string())?;
+    let dir = model().parent().ok_or("Invalid whisper model path")?.to_path_buf(); tokio::fs::create_dir_all(&dir).await.map_err(|e| e.to_string())?;
     let part = dir.join("ggml-base.bin.part");
-    let mut resp = reqwest::Client::new().get(MODEL_URL).send().await.map_err(|_| "I couldn't reach the download. Check your internet and try again.")?;
+    let client = reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(15)).build().map_err(|e| e.to_string())?;
+    let mut resp = client.get(MODEL_URL).send().await.map_err(|_| "I couldn't reach the download. Check your internet and try again.")?;
     if !resp.status().is_success() { return Err(format!("The download didn't start ({}).", resp.status())); }
     TOTAL.store(resp.content_length().unwrap_or(147_964_211), Relaxed);
     let mut f = tokio::fs::File::create(&part).await.map_err(|e| e.to_string())?;
-    while let Some(chunk) = resp.chunk().await.map_err(|_| "The download stopped partway. Try again.")? {
+    loop {
+        let chunk = tokio::time::timeout(std::time::Duration::from_secs(30), resp.chunk())
+            .await
+            .map_err(|_| "The download timed out. Try again.")?
+            .map_err(|_| "The download stopped partway. Try again.")?;
+        let Some(chunk) = chunk else { break; };
         f.write_all(&chunk).await.map_err(|e| e.to_string())?; GOT.fetch_add(chunk.len() as u64, Relaxed);
     }
     f.flush().await.map_err(|e| e.to_string())?; drop(f);
