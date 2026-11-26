@@ -34,6 +34,12 @@
   const uid = () => Math.random().toString(36).slice(2, 10);
   const tilt = () => +(Math.random() * 4 - 2).toFixed(1);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  async function fetchWithTimeout(url, opts = {}, ms = 10000) {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), ms);
+    try { return await fetch(url, { ...opts, signal: ac.signal }); }
+    finally { clearTimeout(t); }
+  }
 
   let board = null, view = { x: 0, y: 0, z: 1 }, sel = new Set(), editing = null, space = false, focusSet = null;
 
@@ -852,7 +858,11 @@
     if (!drag && board) { layoutAll(); cleanNumbers(); }
     if (!restoring) { clearTimeout(snapT); snapT = setTimeout(remember, 350); }
     layersSoon(); $('saved').textContent = 'saving…'; clearTimeout(saveT);
-    saveT = setTimeout(async () => { board.view = view; await MB.save(board); $('saved').textContent = 'saved'; refreshBoards(); }, 400);
+    saveT = setTimeout(async () => {
+      board.view = view;
+      try { await MB.save(board); $('saved').textContent = 'saved'; refreshBoards(); }
+      catch (e) { console.error('[FMEA] Board save failed:', e); $('saved').textContent = 'save failed'; say('Could not save this board: ' + (e?.message || 'storage full or locked.'), 6000); }
+    }, 400);
   }
 
   // after Mochi works: glide to what she made (unless it's already in view) and let it glow for a moment
@@ -1644,7 +1654,7 @@
     Object.assign(c, { type: 'spotify', url: `https://open.spotify.com/${s2.kind}/${s2.sid}`, kind: s2.kind, sid: s2.sid, w: 320, h: spH(s2.kind), title: c.title && !/^https?:/.test(c.title) ? c.title : 'Spotify', loading: false, draft: '' });
     renderCard(c); save();
     // Spotify's own public info (no account needed): the real name and cover art, kept on the card for offline, Layers and Mochi
-    try { const r = await fetch('https://open.spotify.com/oembed?url=' + encodeURIComponent(c.url)); if (r.ok) { const o = await r.json(); if (o.title) c.title = o.title; if (o.thumbnail_url) c.image = o.thumbnail_url; } } catch (e) {}
+    try { const r = await fetchWithTimeout('https://open.spotify.com/oembed?url=' + encodeURIComponent(c.url)); if (r.ok) { const o = await r.json(); if (o.title) c.title = o.title; if (o.thumbnail_url) c.image = o.thumbnail_url; } } catch (e) {}
     if (!c.title || c.title === 'Spotify') try { const p = await MB.linkPreview(c.url); if (p.title && !/^open\.spotify\.com$/i.test(p.title)) c.title = p.title.replace(/\s*[|·-]\s*Spotify\s*$/i, ''); if (!c.image && p.image) c.image = p.image; } catch (e) {}
     c.desc = { track: 'Song', album: 'Album', playlist: 'Playlist', episode: 'Podcast episode', show: 'Podcast', artist: 'Artist' }[c.kind] + ' on Spotify'; renderCard(c); save();
     return true;
@@ -2852,7 +2862,7 @@
     if (!navigator.onLine) { $('fbsStatus').textContent = "You're offline. Your note is still here; send it when you're back."; return; }
     $('fbsNext').disabled = true; $('fbsStatus').textContent = 'Sending…';
     try {
-      const r = await fetch(FB_URL, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ ...o, _subject: 'Mochiboard feedback ✦' }) });
+      const r = await fetchWithTimeout(FB_URL, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ ...o, _subject: 'Mochiboard feedback ✦' }) }, 15000);
       if (!r.ok) throw new Error(r.status);
       ['fbsMsg', 'fbsEmail', 'fbsName', 'fbsRole'].forEach(id => $(id).value = ''); $('fbsCredit').checked = false; $('fbsCreditRow').hidden = true;
       $('fbsStatus').textContent = 'Sent ✦ Thank you!'; setTimeout(closeFeedback, 1200);
